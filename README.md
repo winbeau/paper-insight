@@ -16,9 +16,10 @@ PaperInsight automatically fetches papers from arXiv, analyzes their relevance t
 
 - **Automated Paper Fetching** — Daily retrieval from arXiv based on configurable research topics
 - **AI-Powered Analysis** — DeepSeek generates Chinese summaries, relevance scores, and heuristic research ideas
-- **Smart Filtering** — Filter papers by relevance score (High/Medium/Low) and processing status
+- **Smart Filtering** — Filter papers by relevance score (High/Low) and processing status; low-score papers are skipped by default
 - **Modern Dashboard** — Clean, academic-yet-modern UI inspired by Linear and Vercel's design language
 - **Expandable Cards** — Click to reveal full abstracts, relevance reasoning, and PDF links
+- **Settings-Driven Workflow** — Configure arXiv categories, research focus query, and custom system prompt from the UI
 
 ## Tech Stack
 
@@ -96,18 +97,21 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-### Research Focus
+### Research Focus & System Prompt
 
-Edit `backend/app/services/arxiv_bot.py` to customize search queries:
+Use the in-app **Settings** modal to control:
 
-```python
-SEARCH_QUERIES = [
-    "Diffusion Transformer DiT",
-    "autoregressive image generation",
-    "KV cache compression LLM",
-    # Add your research topics...
-]
-```
+- **Research Focus**: full arXiv query string (supports AND/OR logic).
+- **arXiv Categories**: toggle categories to scope the search.
+- **System Prompt**: appended to the DeepSeek system prompt for custom scoring emphasis.
+
+If your Research Focus contains `;`, it is parsed into keywords for UI display. Otherwise the query is used verbatim for arXiv search.
+
+### Scoring & Visibility
+
+- **High**: 9–10
+- **Low**: 5–8
+- **Skipped**: < 5 (stored in DB but not shown in the default `/papers` listing)
 
 ## API Endpoints
 
@@ -119,6 +123,8 @@ SEARCH_QUERIES = [
 | `POST` | `/papers/fetch` | Trigger paper fetching |
 | `POST` | `/papers/{id}/process` | Process paper with LLM |
 | `GET` | `/stats` | Get statistics |
+| `GET` | `/settings` | Get app settings |
+| `PUT` | `/settings` | Update app settings |
 
 ### Query Parameters
 
