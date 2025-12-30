@@ -53,8 +53,8 @@ cd backend
 # Install dependencies with uv
 uv sync
 
-# Create PostgreSQL database
-createdb paper_insight
+# Start PostgreSQL database using Docker
+docker run --name paper-insight-db -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=paper_insight -p 5432:5432 -d postgres:latest
 
 # Configure environment
 cp .env.example .env
