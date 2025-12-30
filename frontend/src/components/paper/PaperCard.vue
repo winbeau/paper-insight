@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, reactive, nextTick } from 'vue'
 import type { Paper } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
@@ -9,6 +9,13 @@ const props = defineProps<{
 }>()
 
 const isExpanded = ref(false)
+const isHoveringAbstract = ref(false)
+const abstractRef = ref<HTMLElement | null>(null)
+const thumbnailStyle = ref({
+  left: '0px',
+  top: '0px',
+})
+const previewOrigin = ref('origin-left')
 
 const formattedDate = computed(() => {
   const date = new Date(props.paper.published)
@@ -38,6 +45,54 @@ const categoriesList = computed(() => {
 
 function toggleExpand() {
   isExpanded.value = !isExpanded.value
+}
+
+function handleMouseEnter() {
+  if (!abstractRef.value || !props.paper.thumbnail_url) return
+
+  const abstractRect = abstractRef.value.getBoundingClientRect()
+  const thumbWidth = 400 // Matches w-[400px]
+  const thumbHeight = 500 // Estimate
+  const padding = 16 
+
+  let newLeft = abstractRect.right + padding
+  let newTop = abstractRect.top
+  let origin = 'origin-left'
+
+  // Check right edge
+  if (newLeft + thumbWidth > window.innerWidth) {
+    newLeft = abstractRect.left - thumbWidth - padding
+    // If we moved it to the left, change origin to right so it grows from the text
+    origin = 'origin-right'
+    
+    // Constrain to left edge if it would go off left
+    if (newLeft < padding) {
+      newLeft = padding
+      origin = 'origin-left' // Fallback if forced to left edge? Maybe center? Keep simple.
+    }
+  }
+  
+  // Check bottom edge
+  if (newTop + thumbHeight > window.innerHeight) {
+    newTop = window.innerHeight - thumbHeight - padding
+    if (newTop < padding) {
+      newTop = padding
+    }
+  }
+  
+  // Ensure it doesn't go off screen to the top
+  newTop = Math.max(padding, newTop);
+
+  thumbnailStyle.value = {
+    left: `${newLeft}px`,
+    top: `${newTop}px`
+  }
+  previewOrigin.value = origin
+  isHoveringAbstract.value = true
+}
+
+function handleMouseLeave() {
+  isHoveringAbstract.value = false
 }
 </script>
 
@@ -90,9 +145,48 @@ function toggleExpand() {
             <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
               Abstract
             </h3>
-            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed">
-              {{ paper.abstract }}
-            </p>
+            <div
+              ref="abstractRef"
+              class="relative group"
+              @mouseenter="handleMouseEnter"
+              @mouseleave="handleMouseLeave"
+            >
+              <p class="text-[var(--color-ink-700)] text-sm leading-relaxed cursor-help">
+                {{ paper.abstract }}
+              </p>
+
+              <Teleport to="body">
+                <Transition
+                  :enter-active-class="`transition duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${previewOrigin}`"
+                  enter-from-class="opacity-0 scale-90 translate-y-2 translate-x-[-10px]"
+                  enter-to-class="opacity-100 scale-100 translate-y-0 translate-x-0"
+                  :leave-active-class="`transition duration-200 ease-in transform ${previewOrigin}`"
+                  leave-from-class="opacity-100 scale-100 translate-y-0"
+                  leave-to-class="opacity-0 scale-95 translate-y-2"
+                >
+                  <div 
+                    v-if="isHoveringAbstract && paper.thumbnail_url"
+                    class="fixed z-[9999] pointer-events-none shadow-2xl rounded-lg border-2 border-white bg-white w-[400px] ring-1 ring-black/5 flex flex-col"
+                    :style="thumbnailStyle"
+                  >
+                    <div class="w-full relative bg-gray-50 rounded-t-lg overflow-hidden">
+                      <img 
+                        :src="paper.thumbnail_url" 
+                        class="w-full h-auto object-contain block"
+                        alt="Paper Preview"
+                      />
+                      <!-- Gradient overlay for depth -->
+                      <div class="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent pointer-events-none mix-blend-multiply"></div>
+                    </div>
+                    
+                    <div class="bg-white px-3 py-2 flex items-center justify-between border-t border-gray-100 rounded-b-lg">
+                      <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">First Page Preview</span>
+                      <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    </div>
+                  </div>
+                </Transition>
+              </Teleport>
+            </div>
           </div>
 
           <!-- Relevance Reason -->

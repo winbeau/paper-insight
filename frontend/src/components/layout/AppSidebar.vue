@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import type { Stats, FilterType, StatusFilter } from '../../types/paper'
+import { ref } from 'vue'
+import type { Stats, FilterType, StatusFilter, AppSettings } from '../../types/paper'
 import FilterChip from '../ui/FilterChip.vue'
+import SettingsModal from '../SettingsModal.vue'
 
 defineProps<{
   stats: Stats | null
+  settings: AppSettings | null // New settings prop
   relevanceFilter: FilterType
   statusFilter: StatusFilter
   loading?: boolean
@@ -13,7 +16,10 @@ const emit = defineEmits<{
   'update:relevanceFilter': [value: FilterType]
   'update:statusFilter': [value: StatusFilter]
   fetch: []
+  'settings-saved': [] // New emit for when settings are saved
 }>()
+
+const showSettings = ref(false)
 
 const relevanceOptions: { value: FilterType; label: string }[] = [
   { value: 'all', label: 'All Papers' },
@@ -27,11 +33,16 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
   { value: 'processed', label: 'Processed' },
   { value: 'pending', label: 'Pending' },
 ]
+
+function handleSettingsClose() {
+  showSettings.value = false
+  emit('settings-saved')
+}
 </script>
 
 <template>
-  <aside class="w-64 flex-shrink-0 bg-[var(--color-paper-100)] border-r border-[var(--color-paper-200)] shadow-[var(--shadow-sidebar)] h-screen sticky top-0 overflow-y-auto">
-    <div class="p-6">
+  <aside class="w-64 flex-shrink-0 bg-[var(--color-paper-100)] border-r border-[var(--color-paper-200)] shadow-[var(--shadow-sidebar)] h-screen sticky top-0 flex flex-col">
+    <div class="p-6 flex-1 overflow-y-auto">
       <!-- Logo / Title -->
       <div class="mb-8">
         <h1 class="font-display text-2xl font-bold text-[var(--color-ink-900)] tracking-tight">
@@ -49,7 +60,7 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
             <p class="text-2xl font-mono font-semibold text-[var(--color-ink-900)]">
               {{ stats.total_papers }}
             </p>
-            <p class="text-xs text-[var(--color-ink-400)]">Total</p>
+            <p class="xs text-[var(--color-ink-400)]">Total</p>
           </div>
           <div>
             <p class="text-2xl font-mono font-semibold text-[var(--color-relevance-high)]">
@@ -111,22 +122,34 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
         </div>
       </div>
 
-      <!-- Focus Area -->
+      <!-- Research Focus (Dynamic) -->
       <div class="mt-8 pt-6 border-t border-[var(--color-paper-200)]">
         <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-3 px-1">
           Research Focus
         </h3>
-        <div class="space-y-2 text-sm text-[var(--color-ink-700)]">
-          <div class="flex items-center gap-2 px-1">
-            <span class="w-2 h-2 rounded-full bg-[var(--color-relevance-high)]"></span>
-            Autoregressive DiT
-          </div>
-          <div class="flex items-center gap-2 px-1">
-            <span class="w-2 h-2 rounded-full bg-[var(--color-relevance-mid)]"></span>
-            KV Cache Compression
-          </div>
+        <div v-if="settings && settings.research_focus" class="px-1 py-2 bg-[var(--color-paper-50)] border border-[var(--color-paper-200)] rounded-lg text-sm text-[var(--color-ink-700)] font-mono whitespace-pre-wrap break-words leading-relaxed shadow-sm">
+          {{ settings.research_focus }}
         </div>
+        <p v-else class="px-1 text-sm text-[var(--color-ink-400)] italic">
+          No focus set. Default query used.
+        </p>
       </div>
     </div>
+
+    <!-- Settings Button (Bottom) -->
+    <div class="p-4 border-t border-[var(--color-paper-200)] bg-[var(--color-paper-50)]">
+      <button
+        @click="showSettings = true"
+        class="w-full px-4 py-2 text-sm font-medium text-[var(--color-ink-700)] hover:text-[var(--color-ink-900)] bg-transparent hover:bg-[var(--color-paper-200)] rounded-lg transition-colors flex items-center justify-center gap-2"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        Settings
+      </button>
+    </div>
+
+    <SettingsModal v-if="showSettings" @close="handleSettingsClose" />
   </aside>
 </template>

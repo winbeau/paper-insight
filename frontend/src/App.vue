@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import type { Paper, Stats, FilterType, StatusFilter } from './types/paper'
-import { fetchPapers, fetchStats, triggerFetch } from './services/api'
+import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
+import { fetchPapers, fetchStats, triggerFetch, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)
+const settings = ref<AppSettings | null>(null) // New settings ref
 const loading = ref(false)
 const fetching = ref(false)
 const error = ref<string | null>(null)
@@ -20,16 +21,19 @@ const filteredPapers = computed(() => {
   // Filter by relevance
   if (relevanceFilter.value === 'high') {
     result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 8)
-  } else if (relevanceFilter.value === 'medium') {
+  }
+  else if (relevanceFilter.value === 'medium') {
     result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 5 && p.relevance_score < 8)
-  } else if (relevanceFilter.value === 'low') {
+  }
+  else if (relevanceFilter.value === 'low') {
     result = result.filter(p => p.relevance_score === null || p.relevance_score < 5)
   }
 
   // Filter by status
   if (statusFilter.value === 'processed') {
     result = result.filter(p => p.is_processed)
-  } else if (statusFilter.value === 'pending') {
+  }
+  else if (statusFilter.value === 'pending') {
     result = result.filter(p => !p.is_processed)
   }
 
@@ -41,12 +45,14 @@ async function loadData() {
   error.value = null
 
   try {
-    const [papersData, statsData] = await Promise.all([
+    const [papersData, statsData, settingsData] = await Promise.all([
       fetchPapers({ limit: 100 }),
       fetchStats(),
+      fetchSettings(), // Fetch settings
     ])
     papers.value = papersData
     stats.value = statsData
+    settings.value = settingsData // Update settings ref
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load data'
     console.error('Failed to load data:', e)
@@ -65,7 +71,8 @@ async function handleFetch() {
     }, 2000)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to fetch papers'
-  } finally {
+  }
+  finally {
     fetching.value = false
   }
 }
@@ -73,6 +80,10 @@ async function handleFetch() {
 onMounted(() => {
   loadData()
 })
+
+function handleSettingsSaved() {
+  loadData() // Reload all data including papers and settings
+}
 </script>
 
 <template>
@@ -80,12 +91,14 @@ onMounted(() => {
     <!-- Sidebar -->
     <AppSidebar
       :stats="stats"
+      :settings="settings"
       :relevance-filter="relevanceFilter"
       :status-filter="statusFilter"
       :loading="fetching"
       @update:relevance-filter="relevanceFilter = $event"
       @update:status-filter="statusFilter = $event"
       @fetch="handleFetch"
+      @settings-saved="handleSettingsSaved"
     />
 
     <!-- Main Content -->

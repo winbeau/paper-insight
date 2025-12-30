@@ -8,6 +8,7 @@ export interface Paper {
   published: string
   updated: string
   pdf_url: string
+  thumbnail_url: string | null
   summary_zh: string | null
   relevance_score: number | null
   relevance_reason: string | null
@@ -22,6 +23,13 @@ export interface Stats {
   processed_papers: number
   high_relevance_papers: number
   pending_processing: number
+}
+
+export interface AppSettings {
+  id: number
+  research_focus: string
+  system_prompt: string
+  arxiv_categories: string[]
 }
 
 export type FilterType = 'all' | 'high' | 'medium' | 'low'
