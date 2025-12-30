@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
 from typing import List, Optional
+import re
 from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import create_db_and_tables, get_session
-from app.models import Paper, PaperRead
+from app.models import Paper, PaperRead, AppSettings
 from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
+from app.constants import ARXIV_OPTIONS
 
 
 @asynccontextmanager
@@ -30,11 +34,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files
+static_path = Path(__file__).parent / "static"
+static_path.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_path), name="static")
+
 
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/constants")
+def get_constants():
+    """Get application constants."""
+    return {"arxiv_options": ARXIV_OPTIONS}
+
+
+@app.get("/settings", response_model=AppSettings)
+def get_settings(session: Session = Depends(get_session)):
+    """Get application settings."""
+    settings = session.get(AppSettings, 1)
+    if not settings:
+        settings = AppSettings(id=1)
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
+
+
+@app.put("/settings", response_model=AppSettings)
+def update_settings(new_settings: AppSettings, session: Session = Depends(get_session)):
+    """Update application settings."""
+    settings = session.get(AppSettings, 1)
+    if not settings:
+        settings = AppSettings(id=1)
+        session.add(settings)
+    
+    settings.research_focus = new_settings.research_focus
+    settings.system_prompt = new_settings.system_prompt
+    settings.arxiv_categories = new_settings.arxiv_categories
+    
+    # Parse focus keywords
+    if new_settings.research_focus:
+        settings.focus_keywords = [
+            k.strip() for k in re.split(r'[;]', new_settings.research_focus) 
+            if k.strip()
+        ]
+    else:
+        settings.focus_keywords = []
+    
+    session.add(settings)
+    session.commit()
+    session.refresh(settings)
+    return settings
 
 
 @app.get("/papers", response_model=List[PaperRead])
@@ -54,7 +108,11 @@ def get_papers(
     if min_score is not None:
         query = query.where(Paper.relevance_score >= min_score)
 
-    query = query.order_by(Paper.published.desc()).offset(skip).limit(limit)
+    query = query.order_by(
+        Paper.is_processed.desc(),
+        Paper.relevance_score.desc().nulls_last(),
+        Paper.published.desc()
+    ).offset(skip).limit(limit)
     papers = session.exec(query).all()
     return papers
 
@@ -88,7 +146,7 @@ def fetch_papers(
 
 
 @app.post("/papers/{paper_id}/process")
-def process_paper(paper_id: int, session: Session = Depends(get_session)):
+async def process_paper(paper_id: int, session: Session = Depends(get_session)):
     """Process a specific paper with LLM analysis."""
     paper = session.get(Paper, paper_id)
     if not paper:
@@ -98,7 +156,7 @@ def process_paper(paper_id: int, session: Session = Depends(get_session)):
         return {"message": "Paper already processed", "paper_id": paper_id}
 
     bot = get_arxiv_bot()
-    success = bot.process_paper(session, paper)
+    success = await bot.process_paper(session, paper)
 
     if success:
         return {"message": "Paper processed successfully", "paper_id": paper_id}

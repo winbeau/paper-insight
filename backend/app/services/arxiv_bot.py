@@ -1,11 +1,13 @@
+import asyncio
 import arxiv
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlmodel import Session, select
 
-from app.models import Paper, PaperCreate
+from app.models import Paper, PaperCreate, AppSettings
 from app.database import get_sync_session
 from app.services.llm_brain import get_llm_brain
+from app.services.pdf_renderer import generate_thumbnail
 
 class ArxivBot:
     """Bot for fetching and processing arXiv papers."""
@@ -17,28 +19,60 @@ class ArxivBot:
             num_retries=3
         )
 
-    def build_query(self) -> str:
-        """Builds a targeted arXiv query for DiT and KV Cache Compression."""
-        # 1. Categories: CV, LG, CL
-        categories = ['cs.CV', 'cs.LG', 'cs.CL']
+    def build_query(self, session: Session) -> str:
+        """Builds a targeted arXiv query using AppSettings or defaults."""
+        settings = session.get(AppSettings, 1)
+        
+        # Defaults
+        default_categories = ['cs.CV', 'cs.LG', 'cs.CL']
+        default_focus = (
+            '((ti:transformer OR abs:transformer OR ti:diffusion OR abs:diffusion OR ti:DiT OR abs:DiT) AND '
+            '(ti:"kv cache" OR abs:"kv cache" OR ti:compression OR abs:compression OR ti:pruning OR abs:pruning OR '
+            'ti:quantization OR abs:quantization OR ti:sparse OR abs:sparse OR ti:"token merging" OR abs:"token merging" OR '
+            'ti:distillation OR abs:distillation OR ti:efficiency OR abs:efficiency))'
+        )
+        categories = default_categories
+        focus_query = default_focus
+
+        if settings:
+            if settings.arxiv_categories:
+                categories = settings.arxiv_categories
+            
+            # Use focus_keywords if available, otherwise fallback to research_focus string or default
+            if settings.focus_keywords:
+                # Construct OR logic for keywords: (all:k1) OR (all:"k 2")
+                keywords_parts = []
+                for k in settings.focus_keywords:
+                    # Wrap in quotes if it contains spaces and isn't already quoted
+                    if " " in k and not (k.startswith('"') and k.endswith('"')):
+                        term = f'"{k}"'
+                    else:
+                        term = k
+                    keywords_parts.append(f'(all:{term})')
+                
+                if keywords_parts:
+                    focus_query = f"({' OR '.join(keywords_parts)})"
+            
+            elif settings.research_focus and settings.research_focus.strip():
+                # Fallback to the raw string if keywords list is empty but string exists (backward compatibility)
+                focus_query = f"({settings.research_focus})"
+        
+        # 1. Categories
         cat_query = "(" + " OR ".join([f"cat:{c}" for c in categories]) + ")"
 
-        # 2. Keywords
-        # Group A: Architecture (Transformer, Diffusion, DiT)
-        group_a = '(ti:transformer OR ti:diffusion OR abs:transformer OR abs:diffusion OR abs:dit)'
+        # 2. Combine
+        final_query = f"{cat_query} AND {focus_query}"
         
-        # Group B: Optimization (KV Cache, Compression, Pruning, Sparse, Quantization, Token)
-        group_b = '(abs:"kv cache" OR abs:compression OR abs:pruning OR abs:sparse OR abs:quantization OR abs:token)'
-
-        return f"{cat_query} AND {group_a} AND {group_b}"
+        return final_query
 
     def fetch_recent_papers(
         self,
+        session: Session,
         max_results: int = 50,
         hours_back: int = 48,
     ) -> List[PaperCreate]:
         """Fetch recent targeted papers from arXiv."""
-        query = self.build_query()
+        query = self.build_query(session)
         print(f"Executing Arxiv Query: {query}")
 
         search = arxiv.Search(
@@ -88,14 +122,29 @@ class ArxivBot:
         session.refresh(paper)
         return paper
 
-    def process_paper(self, session: Session, paper: Paper) -> bool:
-        """Process a paper with LLM analysis."""
+    async def process_paper(self, session: Session, paper: Paper) -> bool:
+        """Process a paper with LLM analysis and thumbnail generation."""
         if paper.is_processed:
             return False
 
         try:
             llm = get_llm_brain()
-            analysis = llm.analyze_paper(paper.title, paper.abstract)
+            
+            # Execute LLM analysis and Thumbnail generation concurrently
+            loop = asyncio.get_running_loop()
+            
+            # Task 1: LLM Analysis (Sync function run in thread)
+            llm_task = loop.run_in_executor(None, llm.analyze_paper, paper.title, paper.abstract)
+            
+            # Task 2: Thumbnail Generation (Async function)
+            thumbnail_task = generate_thumbnail(paper.arxiv_id, paper.pdf_url)
+
+            # Wait for both
+            analysis, thumbnail_url = await asyncio.gather(llm_task, thumbnail_task)
+
+            # Update thumbnail regardless of relevance (visuals are good)
+            if thumbnail_url:
+                paper.thumbnail_url = thumbnail_url
 
             if analysis:
                 if analysis.relevance_score < 4:
@@ -119,19 +168,22 @@ class ArxivBot:
         return False
 
 
-def run_daily_fetch():
-    """Run daily paper fetch and processing job."""
+async def run_daily_fetch_async():
+    """Async wrapper for daily fetch logic."""
     print(f"[{datetime.now()}] Starting daily paper fetch...")
 
     bot = ArxivBot()
     session = get_sync_session()
 
     try:
-        # Fetch new papers using the optimized targeted query
-        papers = bot.fetch_recent_papers(max_results=50, hours_back=48)
+        # Fetch new papers (Sync)
+        # Using run_in_executor to avoid blocking the event loop if this takes time
+        # We pass the session to fetch_recent_papers
+        loop = asyncio.get_running_loop()
+        papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 48)
         print(f"Fetched {len(papers)} papers from arXiv")
 
-        # Save to database
+        # Save to database (Sync)
         saved_count = 0
         for paper_data in papers:
             paper = bot.save_paper(session, paper_data)
@@ -139,7 +191,7 @@ def run_daily_fetch():
                 saved_count += 1
         print(f"Saved {saved_count} new papers to database")
 
-        # Process unprocessed papers
+        # Process unprocessed papers (Async)
         unprocessed = session.exec(
             select(Paper).where(Paper.is_processed == False)
         ).all()
@@ -147,7 +199,8 @@ def run_daily_fetch():
 
         processed_count = 0
         for paper in unprocessed:
-            if bot.process_paper(session, paper):
+            # Await the async process
+            if await bot.process_paper(session, paper):
                 processed_count += 1
                 print(f"  Processed: {paper.title[:50]}...")
 
@@ -159,6 +212,10 @@ def run_daily_fetch():
         session.close()
 
     print(f"[{datetime.now()}] Daily fetch completed")
+
+def run_daily_fetch():
+    """Entry point that runs the async fetcher in a loop."""
+    asyncio.run(run_daily_fetch_async())
 
 
 # Singleton instance

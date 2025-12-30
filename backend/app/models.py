@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from sqlmodel import SQLModel, Field, Column, Text
+from sqlalchemy import JSON
 from pydantic import BaseModel
 
 
@@ -15,6 +16,7 @@ class Paper(SQLModel, table=True):
     published: datetime
     updated: datetime
     pdf_url: str
+    thumbnail_url: Optional[str] = None
 
     # AI-generated analysis fields
     summary_zh: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -51,6 +53,7 @@ class PaperRead(SQLModel):
     published: datetime
     updated: datetime
     pdf_url: str
+    thumbnail_url: Optional[str] = None
     summary_zh: Optional[str]
     relevance_score: Optional[float]
     relevance_reason: Optional[str]
@@ -66,3 +69,12 @@ class LLMAnalysis(BaseModel):
     relevance_score: float
     relevance_reason: str
     heuristic_idea: str
+
+
+class AppSettings(SQLModel, table=True):
+    """Application settings stored in DB."""
+    id: int = Field(default=1, primary_key=True)
+    research_focus: str = Field(sa_column=Column(Text, default=""))
+    focus_keywords: List[str] = Field(default=[], sa_column=Column(JSON))
+    system_prompt: str = Field(sa_column=Column(Text, default=""))
+    arxiv_categories: List[str] = Field(sa_column=Column(JSON, default=["cs.CV", "cs.LG"]))
