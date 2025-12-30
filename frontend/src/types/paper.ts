@@ -14,6 +14,7 @@ export interface Paper {
   relevance_reason: string | null
   heuristic_idea: string | null
   is_processed: boolean
+  processing_status: string
   created_at: string
   processed_at: string | null
 }
@@ -28,6 +29,7 @@ export interface Stats {
 export interface AppSettings {
   id: number
   research_focus: string
+  focus_keywords: string[]
   system_prompt: string
   arxiv_categories: string[]
 }

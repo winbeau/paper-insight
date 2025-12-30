@@ -39,7 +39,7 @@ class ArxivBot:
                 categories = settings.arxiv_categories
             
             # Use focus_keywords if available, otherwise fallback to research_focus string or default
-            if settings.focus_keywords:
+            if settings.focus_keywords and (not settings.research_focus or ";" in settings.research_focus):
                 # Construct OR logic for keywords: (all:k1) OR (all:"k 2")
                 keywords_parts = []
                 for k in settings.focus_keywords:
@@ -128,42 +128,46 @@ class ArxivBot:
             return False
 
         try:
-            llm = get_llm_brain()
-            
-            # Execute LLM analysis and Thumbnail generation concurrently
+            paper.processing_status = "processing"
+            session.add(paper)
+            session.commit()
+            session.refresh(paper)
+
+            # Execute LLM analysis and thumbnail generation sequentially
             loop = asyncio.get_running_loop()
             
-            # Task 1: LLM Analysis (Sync function run in thread)
-            llm_task = loop.run_in_executor(None, llm.analyze_paper, paper.title, paper.abstract)
-            
-            # Task 2: Thumbnail Generation (Async function)
-            thumbnail_task = generate_thumbnail(paper.arxiv_id, paper.pdf_url)
-
-            # Wait for both
-            analysis, thumbnail_url = await asyncio.gather(llm_task, thumbnail_task)
+            llm = get_llm_brain()
+            analysis = await loop.run_in_executor(
+                None, llm.analyze_paper, paper.title, paper.abstract
+            )
+            thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
 
             # Update thumbnail regardless of relevance (visuals are good)
             if thumbnail_url:
                 paper.thumbnail_url = thumbnail_url
 
             if analysis:
-                if analysis.relevance_score < 4:
-                    print(f"Skipping paper {paper.arxiv_id} due to low relevance score: {analysis.relevance_score}")
-                    return False
-
                 paper.summary_zh = analysis.summary_zh
                 paper.relevance_score = analysis.relevance_score
                 paper.relevance_reason = analysis.relevance_reason
                 paper.heuristic_idea = analysis.heuristic_idea
                 paper.is_processed = True
+                paper.processing_status = "processed"
                 paper.processed_at = datetime.utcnow()
 
                 session.add(paper)
                 session.commit()
                 return True
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            session.refresh(paper)
 
         except Exception as e:
             print(f"Error processing paper {paper.arxiv_id}: {e}")
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
 
         return False
 

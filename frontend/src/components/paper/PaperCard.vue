@@ -1,21 +1,31 @@
 <script setup lang="ts">
-import { ref, computed, reactive, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import type { Paper } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
+import { processPaper } from '../../services/api'
 
 const props = defineProps<{
   paper: Paper
 }>()
 
+const emit = defineEmits<{
+  refresh: []
+}>()
+
 const isExpanded = ref(false)
 const isHoveringAbstract = ref(false)
+const isRetrying = ref(false)
+const localStatus = ref<string | null>(null)
 const abstractRef = ref<HTMLElement | null>(null)
 const thumbnailStyle = ref({
   left: '0px',
   top: '0px',
 })
 const previewOrigin = ref('origin-left')
+const pendingPreviewStyle = ref<{ left: string; top: string } | null>(null)
+const pendingPreviewOrigin = ref<string | null>(null)
+let reappearTimer: number | null = null
 
 const formattedDate = computed(() => {
   const date = new Date(props.paper.published)
@@ -43,56 +53,163 @@ const categoriesList = computed(() => {
   return props.paper.categories.split(',').map(c => c.trim()).slice(0, 3)
 })
 
+const statusValue = computed(() => {
+  return localStatus.value ?? props.paper.processing_status
+})
+
+const isProcessing = computed(() => {
+  return statusValue.value === 'processing'
+})
+
+const isFailed = computed(() => {
+  return statusValue.value === 'failed'
+})
+
+const statusLabel = computed(() => {
+  if (statusValue.value === 'processing') return 'DeepSeek reasoning...'
+  if (statusValue.value === 'failed') return 'Analysis failed'
+  return 'Queued for analysis'
+})
+
+const statusTag = computed(() => {
+  if (statusValue.value === 'processing') return 'processing'
+  if (statusValue.value === 'failed') return 'failed'
+  return 'pending'
+})
+
+async function handleRetry() {
+  if (isRetrying.value || isProcessing.value) return
+  isRetrying.value = true
+  localStatus.value = 'processing'
+  try {
+    await processPaper(props.paper.id)
+    localStatus.value = null
+    emit('refresh')
+  } catch (error) {
+    localStatus.value = 'failed'
+    console.error('Retry failed:', error)
+  } finally {
+    isRetrying.value = false
+  }
+}
+
 function toggleExpand() {
   isExpanded.value = !isExpanded.value
 }
 
-function handleMouseEnter() {
-  if (!abstractRef.value || !props.paper.thumbnail_url) return
+function calculatePreviewPosition(event: MouseEvent) {
+  if (!props.paper.thumbnail_url) return
 
-  const abstractRect = abstractRef.value.getBoundingClientRect()
   const thumbWidth = 400 // Matches w-[400px]
   const thumbHeight = 500 // Estimate
-  const padding = 16 
+  const padding = 16
+  const offset = 20
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
 
-  let newLeft = abstractRect.right + padding
-  let newTop = abstractRect.top
+  let newLeft = event.clientX + offset
+  let newTop = event.clientY + offset
   let origin = 'origin-left'
 
-  // Check right edge
-  if (newLeft + thumbWidth > window.innerWidth) {
-    newLeft = abstractRect.left - thumbWidth - padding
-    // If we moved it to the left, change origin to right so it grows from the text
+  if (newLeft + thumbWidth + padding > viewportWidth) {
+    newLeft = event.clientX - thumbWidth - offset
     origin = 'origin-right'
-    
-    // Constrain to left edge if it would go off left
     if (newLeft < padding) {
       newLeft = padding
-      origin = 'origin-left' // Fallback if forced to left edge? Maybe center? Keep simple.
     }
   }
-  
-  // Check bottom edge
-  if (newTop + thumbHeight > window.innerHeight) {
-    newTop = window.innerHeight - thumbHeight - padding
-    if (newTop < padding) {
-      newTop = padding
-    }
-  }
-  
-  // Ensure it doesn't go off screen to the top
-  newTop = Math.max(padding, newTop);
 
-  thumbnailStyle.value = {
-    left: `${newLeft}px`,
-    top: `${newTop}px`
+  if (newTop + thumbHeight + padding > viewportHeight) {
+    newTop = event.clientY - thumbHeight - offset
   }
-  previewOrigin.value = origin
+
+  newTop = Math.max(padding, Math.min(newTop, viewportHeight - thumbHeight - padding))
+
+  return {
+    style: {
+      left: `${newLeft}px`,
+      top: `${newTop}px`,
+    },
+    origin,
+  }
+}
+
+function updatePreviewPosition(event: MouseEvent) {
+  const result = calculatePreviewPosition(event)
+  if (!result) return
+  thumbnailStyle.value = result.style
+  previewOrigin.value = result.origin
+}
+
+
+function handleMouseEnter(event: MouseEvent) {
+  if (!abstractRef.value || !props.paper.thumbnail_url) return
+  if (reappearTimer !== null) {
+    window.clearTimeout(reappearTimer)
+    reappearTimer = null
+  }
+  updatePreviewPosition(event)
   isHoveringAbstract.value = true
 }
 
 function handleMouseLeave() {
+  if (reappearTimer !== null) {
+    window.clearTimeout(reappearTimer)
+    reappearTimer = null
+  }
+  pendingPreviewStyle.value = null
+  pendingPreviewOrigin.value = null
   isHoveringAbstract.value = false
+}
+
+function handleMouseMove(event: MouseEvent) {
+  if (!props.paper.thumbnail_url) return
+
+  const result = calculatePreviewPosition(event)
+  if (!result) return
+
+  const nextStyle = result.style
+  const origin = result.origin
+
+  if (!isHoveringAbstract.value) {
+    pendingPreviewStyle.value = nextStyle
+    pendingPreviewOrigin.value = origin
+    if (reappearTimer === null) {
+      reappearTimer = window.setTimeout(() => {
+        if (pendingPreviewStyle.value && pendingPreviewOrigin.value) {
+          thumbnailStyle.value = pendingPreviewStyle.value
+          previewOrigin.value = pendingPreviewOrigin.value
+        }
+        pendingPreviewStyle.value = null
+        pendingPreviewOrigin.value = null
+        isHoveringAbstract.value = true
+        reappearTimer = null
+      }, 200)
+    }
+    return
+  }
+
+  if (origin !== previewOrigin.value) {
+    pendingPreviewStyle.value = nextStyle
+    pendingPreviewOrigin.value = origin
+    isHoveringAbstract.value = false
+    if (reappearTimer === null) {
+      reappearTimer = window.setTimeout(() => {
+        if (pendingPreviewStyle.value && pendingPreviewOrigin.value) {
+          thumbnailStyle.value = pendingPreviewStyle.value
+          previewOrigin.value = pendingPreviewOrigin.value
+        }
+        pendingPreviewStyle.value = null
+        pendingPreviewOrigin.value = null
+        isHoveringAbstract.value = true
+        reappearTimer = null
+      }, 200)
+    }
+    return
+  }
+
+  thumbnailStyle.value = nextStyle
+  previewOrigin.value = origin
 }
 </script>
 
@@ -149,6 +266,7 @@ function handleMouseLeave() {
               ref="abstractRef"
               class="relative group"
               @mouseenter="handleMouseEnter"
+              @mousemove="handleMouseMove"
               @mouseleave="handleMouseLeave"
             >
               <p class="text-[var(--color-ink-700)] text-sm leading-relaxed cursor-help">
@@ -238,15 +356,38 @@ function handleMouseLeave() {
     <!-- Processing Status -->
     <div
       v-if="!paper.is_processed"
-      class="px-5 py-2 bg-[var(--color-paper-200)] rounded-b-xl border-t border-[var(--color-paper-300)]"
+      class="px-5 py-3 bg-[var(--color-paper-200)] rounded-b-xl border-t border-[var(--color-paper-300)]"
     >
-      <span class="text-xs text-[var(--color-ink-400)] flex items-center gap-2">
-        <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        Pending AI analysis...
-      </span>
+      <div class="flex items-center justify-between text-xs text-[var(--color-ink-400)]">
+        <span class="flex items-center gap-2">
+          <svg
+            v-if="isProcessing"
+            class="w-3.5 h-3.5 animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          {{ statusLabel }}
+        </span>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-[10px] uppercase tracking-wider">
+            {{ statusTag }}
+          </span>
+          <button
+            v-if="isFailed"
+            class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"
+            @click.stop="handleRetry"
+            :disabled="isRetrying"
+          >
+            {{ isRetrying ? 'retrying' : 'retry' }}
+          </button>
+        </div>
+      </div>
+      <div v-if="isProcessing" class="relative mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-300)]">
+        <div class="absolute inset-y-0 left-0 w-1/3 bg-[var(--color-ink-700)]/60 animate-progress-bar"></div>
+      </div>
     </div>
   </article>
 </template>

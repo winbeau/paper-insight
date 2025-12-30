@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { Stats, FilterType, StatusFilter, AppSettings } from '../../types/paper'
 import FilterChip from '../ui/FilterChip.vue'
 import SettingsModal from '../SettingsModal.vue'
 
-defineProps<{
+const props = defineProps<{
   stats: Stats | null
   settings: AppSettings | null // New settings prop
   relevanceFilter: FilterType
@@ -33,6 +33,18 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
   { value: 'processed', label: 'Processed' },
   { value: 'pending', label: 'Pending' },
 ]
+
+const focusKeywords = computed(() => {
+  if (!props.settings) return []
+  if (props.settings.focus_keywords && props.settings.focus_keywords.length > 0) {
+    return props.settings.focus_keywords
+  }
+  if (!props.settings.research_focus) return []
+  return props.settings.research_focus
+    .split(/[;]+/)
+    .map((keyword) => keyword.trim())
+    .filter(Boolean)
+})
 
 function handleSettingsClose() {
   showSettings.value = false
@@ -127,8 +139,16 @@ function handleSettingsClose() {
         <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-3 px-1">
           Research Focus
         </h3>
-        <div v-if="settings && settings.research_focus" class="px-1 py-2 bg-[var(--color-paper-50)] border border-[var(--color-paper-200)] rounded-lg text-sm text-[var(--color-ink-700)] font-mono whitespace-pre-wrap break-words leading-relaxed shadow-sm">
-          {{ settings.research_focus }}
+        <div v-if="focusKeywords.length > 0" class="px-1">
+          <div class="flex flex-wrap gap-2">
+            <span
+              v-for="keyword in focusKeywords"
+              :key="keyword"
+              class="px-2.5 py-1 rounded-md bg-[var(--color-paper-50)] border border-[var(--color-paper-200)] text-xs text-[var(--color-ink-700)] font-mono shadow-sm"
+            >
+              {{ keyword }}
+            </span>
+          </div>
         </div>
         <p v-else class="px-1 text-sm text-[var(--color-ink-400)] italic">
           No focus set. Default query used.

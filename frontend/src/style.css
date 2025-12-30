@@ -110,6 +110,11 @@ body {
   50% { opacity: 0.8; }
 }
 
+@keyframes progress-bar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out;
 }
@@ -120,6 +125,10 @@ body {
 
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+.animate-progress-bar {
+  animation: progress-bar 1.4s ease-in-out infinite;
 }
 
 /* Card Transitions */

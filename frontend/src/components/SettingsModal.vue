@@ -23,6 +23,7 @@ const arxivOptions = ref<ArxivOption[]>([])
 const settings = ref<AppSettings>({
   id: 1,
   research_focus: '',
+  focus_keywords: [],
   system_prompt: '',
   arxiv_categories: [], // Default to empty, will be populated from API
 })

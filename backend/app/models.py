@@ -26,6 +26,7 @@ class Paper(SQLModel, table=True):
 
     # Metadata
     is_processed: bool = Field(default=False)
+    processing_status: str = Field(default="pending", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     processed_at: Optional[datetime] = None
 
@@ -59,6 +60,7 @@ class PaperRead(SQLModel):
     relevance_reason: Optional[str]
     heuristic_idea: Optional[str]
     is_processed: bool
+    processing_status: str
     created_at: datetime
     processed_at: Optional[datetime]
 

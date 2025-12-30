@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
 import { fetchPapers, fetchStats, triggerFetch, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
+import KeywordCloud from './components/ui/KeywordCloud.vue'
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)
@@ -11,6 +12,7 @@ const settings = ref<AppSettings | null>(null) // New settings ref
 const loading = ref(false)
 const fetching = ref(false)
 const error = ref<string | null>(null)
+const refreshTimer = ref<number | null>(null)
 
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
@@ -41,6 +43,7 @@ const filteredPapers = computed(() => {
 })
 
 async function loadData() {
+  if (loading.value) return
   loading.value = true
   error.value = null
 
@@ -58,6 +61,7 @@ async function loadData() {
     console.error('Failed to load data:', e)
   } finally {
     loading.value = false
+    scheduleAutoRefresh()
   }
 }
 
@@ -80,6 +84,26 @@ async function handleFetch() {
 onMounted(() => {
   loadData()
 })
+
+onUnmounted(() => {
+  if (refreshTimer.value !== null) {
+    window.clearTimeout(refreshTimer.value)
+    refreshTimer.value = null
+  }
+})
+
+function scheduleAutoRefresh() {
+  if (refreshTimer.value !== null) {
+    window.clearTimeout(refreshTimer.value)
+    refreshTimer.value = null
+  }
+  const hasProcessing = papers.value.some((paper) => paper.processing_status === 'processing')
+  if (!hasProcessing) return
+
+  refreshTimer.value = window.setTimeout(() => {
+    loadData()
+  }, 5000)
+}
 
 function handleSettingsSaved() {
   loadData() // Reload all data including papers and settings
@@ -187,6 +211,7 @@ function handleSettingsSaved() {
             :paper="paper"
             class="animate-slide-up"
             :style="{ animationDelay: `${filteredPapers.indexOf(paper) * 50}ms` }"
+            @refresh="loadData"
           />
         </div>
       </div>

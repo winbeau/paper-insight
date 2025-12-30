@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from sqlmodel import Session, select
 
-from app.database import create_db_and_tables, get_session
+from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session
 from app.models import Paper, PaperRead, AppSettings
 from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
 from app.constants import ARXIV_OPTIONS
@@ -16,6 +16,8 @@ from app.constants import ARXIV_OPTIONS
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
+    ensure_appsettings_schema()
+    ensure_paper_schema()
     yield
 
 
@@ -78,10 +80,34 @@ def update_settings(new_settings: AppSettings, session: Session = Depends(get_se
     
     # Parse focus keywords
     if new_settings.research_focus:
-        settings.focus_keywords = [
-            k.strip() for k in re.split(r'[;]', new_settings.research_focus) 
-            if k.strip()
-        ]
+        raw_focus = new_settings.research_focus.strip()
+        if ";" in raw_focus:
+            keywords = [
+                k.strip() for k in re.split(r"[;]+", raw_focus)
+                if k.strip()
+            ]
+        else:
+            parts = re.split(r"\bOR\b|\bAND\b", raw_focus, flags=re.IGNORECASE)
+            keywords = []
+            for part in parts:
+                cleaned = part.strip()
+                if not cleaned:
+                    continue
+                cleaned = re.sub(r"^[()]+|[()]+$", "", cleaned).strip()
+                cleaned = re.sub(r"^(?:all|abs|ti):", "", cleaned, flags=re.IGNORECASE).strip()
+                cleaned = cleaned.strip('"').strip()
+                if cleaned:
+                    keywords.append(cleaned)
+
+            seen = set()
+            deduped = []
+            for keyword in keywords:
+                if keyword not in seen:
+                    deduped.append(keyword)
+                    seen.add(keyword)
+            keywords = deduped
+
+        settings.focus_keywords = keywords
     else:
         settings.focus_keywords = []
     

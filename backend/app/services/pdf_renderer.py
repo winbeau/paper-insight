@@ -1,8 +1,8 @@
-import os
 import fitz  # pymupdf
 import httpx
 from pathlib import Path
 from typing import Optional
+import asyncio
 
 # Constants
 STATIC_DIR = Path(__file__).parent.parent / "static"
@@ -46,19 +46,10 @@ async def generate_thumbnail(arxiv_id: str, pdf_url: str) -> Optional[str]:
             response.raise_for_status()
             pdf_data = response.content
 
-        # 3. Render Thumbnail
-        # Open PDF from memory
-        doc = fitz.open(stream=pdf_data, filetype="pdf")
-        
-        if len(doc) < 1:
+        # 3. Render Thumbnail (offload CPU-bound work)
+        success = await asyncio.to_thread(_render_thumbnail, pdf_data, file_path)
+        if not success:
             return None
-            
-        page = doc[0]
-        # Matrix(1.5, 1.5) increases resolution for better quality
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-        
-        # 4. Save to disk
-        pix.save(str(file_path))
         
         return relative_url
 
@@ -68,6 +59,23 @@ async def generate_thumbnail(arxiv_id: str, pdf_url: str) -> Optional[str]:
     except Exception as e:
         print(f"Error generating thumbnail for {arxiv_id}: {e}")
         return None
+
+
+def _render_thumbnail(pdf_data: bytes, file_path: Path) -> bool:
+    """Render the first page of a PDF to a thumbnail on disk."""
+    doc = None
+    try:
+        doc = fitz.open(stream=pdf_data, filetype="pdf")
+        if len(doc) < 1:
+            return False
+        page = doc[0]
+        # Matrix(1.5, 1.5) increases resolution for better quality
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        pix.save(str(file_path))
+        return True
+    except Exception as e:
+        print(f"Error rendering thumbnail: {e}")
+        return False
     finally:
-        if 'doc' in locals():
+        if doc is not None:
             doc.close()
