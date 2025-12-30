@@ -1,5 +1,5 @@
 import arxiv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlmodel import Session, select
 
@@ -7,30 +7,40 @@ from app.models import Paper, PaperCreate
 from app.database import get_sync_session
 from app.services.llm_brain import get_llm_brain
 
-# Research-focused search queries
-SEARCH_QUERIES = [
-    "Diffusion Transformer DiT",
-    "autoregressive image generation",
-    "KV cache compression LLM",
-    "attention cache optimization",
-    "transformer inference efficiency",
-    "visual autoregressive model",
-]
-
-
 class ArxivBot:
     """Bot for fetching and processing arXiv papers."""
 
     def __init__(self):
-        self.client = arxiv.Client()
+        self.client = arxiv.Client(
+            page_size=50,
+            delay_seconds=3,
+            num_retries=3
+        )
 
-    def fetch_papers(
+    def build_query(self) -> str:
+        """Builds a targeted arXiv query for DiT and KV Cache Compression."""
+        # 1. Categories: CV, LG, CL
+        categories = ['cs.CV', 'cs.LG', 'cs.CL']
+        cat_query = "(" + " OR ".join([f"cat:{c}" for c in categories]) + ")"
+
+        # 2. Keywords
+        # Group A: Architecture (Transformer, Diffusion, DiT)
+        group_a = '(ti:transformer OR ti:diffusion OR abs:transformer OR abs:diffusion OR abs:dit)'
+        
+        # Group B: Optimization (KV Cache, Compression, Pruning, Sparse, Quantization, Token)
+        group_b = '(abs:"kv cache" OR abs:compression OR abs:pruning OR abs:sparse OR abs:quantization OR abs:token)'
+
+        return f"{cat_query} AND {group_a} AND {group_b}"
+
+    def fetch_recent_papers(
         self,
-        query: str,
-        max_results: int = 20,
-        days_back: int = 7,
+        max_results: int = 50,
+        hours_back: int = 48,
     ) -> List[PaperCreate]:
-        """Fetch recent papers from arXiv based on query."""
+        """Fetch recent targeted papers from arXiv."""
+        query = self.build_query()
+        print(f"Executing Arxiv Query: {query}")
+
         search = arxiv.Search(
             query=query,
             max_results=max_results,
@@ -38,13 +48,15 @@ class ArxivBot:
             sort_order=arxiv.SortOrder.Descending,
         )
 
-        cutoff_date = datetime.now() - timedelta(days=days_back)
+        # Use UTC aware time for comparison
+        cutoff_date = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         papers = []
 
         for result in self.client.results(search):
-            # Filter by date
-            if result.published.replace(tzinfo=None) < cutoff_date:
-                continue
+            # Arxiv dates are timezone aware (UTC)
+            if result.published < cutoff_date:
+                # Since results are sorted descending, we can stop early
+                break
 
             paper = PaperCreate(
                 arxiv_id=result.entry_id.split("/")[-1],
@@ -52,35 +64,14 @@ class ArxivBot:
                 authors=", ".join([author.name for author in result.authors]),
                 abstract=result.summary.replace("\n", " ").strip(),
                 categories=", ".join(result.categories),
-                published=result.published.replace(tzinfo=None),
-                updated=result.updated.replace(tzinfo=None),
+                # Convert to naive UTC for DB storage
+                published=result.published.astimezone(timezone.utc).replace(tzinfo=None),
+                updated=result.updated.astimezone(timezone.utc).replace(tzinfo=None),
                 pdf_url=result.pdf_url,
             )
             papers.append(paper)
 
         return papers
-
-    def fetch_all_topics(
-        self,
-        max_results_per_query: int = 15,
-        days_back: int = 7,
-    ) -> List[PaperCreate]:
-        """Fetch papers for all research topics."""
-        all_papers = []
-        seen_ids = set()
-
-        for query in SEARCH_QUERIES:
-            papers = self.fetch_papers(
-                query=query,
-                max_results=max_results_per_query,
-                days_back=days_back,
-            )
-            for paper in papers:
-                if paper.arxiv_id not in seen_ids:
-                    seen_ids.add(paper.arxiv_id)
-                    all_papers.append(paper)
-
-        return all_papers
 
     def save_paper(self, session: Session, paper_data: PaperCreate) -> Optional[Paper]:
         """Save a paper to database if not exists."""
@@ -107,6 +98,10 @@ class ArxivBot:
             analysis = llm.analyze_paper(paper.title, paper.abstract)
 
             if analysis:
+                if analysis.relevance_score < 4:
+                    print(f"Skipping paper {paper.arxiv_id} due to low relevance score: {analysis.relevance_score}")
+                    return False
+
                 paper.summary_zh = analysis.summary_zh
                 paper.relevance_score = analysis.relevance_score
                 paper.relevance_reason = analysis.relevance_reason
@@ -132,8 +127,8 @@ def run_daily_fetch():
     session = get_sync_session()
 
     try:
-        # Fetch new papers
-        papers = bot.fetch_all_topics(max_results_per_query=15, days_back=3)
+        # Fetch new papers using the optimized targeted query
+        papers = bot.fetch_recent_papers(max_results=50, hours_back=48)
         print(f"Fetched {len(papers)} papers from arXiv")
 
         # Save to database
