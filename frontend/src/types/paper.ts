@@ -34,5 +34,5 @@ export interface AppSettings {
   arxiv_categories: string[]
 }
 
-export type FilterType = 'all' | 'high' | 'medium' | 'low'
+export type FilterType = 'all' | 'high' | 'low'
 export type StatusFilter = 'all' | 'processed' | 'pending'

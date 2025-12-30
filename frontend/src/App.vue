@@ -17,18 +17,27 @@ const refreshTimer = ref<number | null>(null)
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
 
+const focusKeywords = computed(() => {
+  if (!settings.value) return []
+  if (settings.value.focus_keywords && settings.value.focus_keywords.length > 0) {
+    return settings.value.focus_keywords
+  }
+  if (!settings.value.research_focus) return []
+  return settings.value.research_focus
+    .split(/[;]+/)
+    .map((keyword) => keyword.trim())
+    .filter(Boolean)
+})
+
 const filteredPapers = computed(() => {
   let result = papers.value
 
   // Filter by relevance
   if (relevanceFilter.value === 'high') {
-    result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 8)
-  }
-  else if (relevanceFilter.value === 'medium') {
-    result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 5 && p.relevance_score < 8)
+    result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 9)
   }
   else if (relevanceFilter.value === 'low') {
-    result = result.filter(p => p.relevance_score === null || p.relevance_score < 5)
+    result = result.filter(p => p.relevance_score !== null && p.relevance_score >= 5 && p.relevance_score < 9)
   }
 
   // Filter by status
@@ -158,6 +167,23 @@ function handleSettingsSaved() {
               class="w-64 pl-10 pr-4 py-2 bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] rounded-lg text-sm text-[var(--color-ink-700)] placeholder-[var(--color-ink-400)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ink-200)] focus:border-transparent transition-all"
             />
           </div>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">
+            Research Focus
+          </span>
+          <div v-if="focusKeywords.length > 0" class="flex flex-wrap gap-2">
+            <span
+              v-for="keyword in focusKeywords"
+              :key="keyword"
+              class="px-2.5 py-1 rounded-md bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] text-xs text-[var(--color-ink-700)] font-mono shadow-sm"
+            >
+              {{ keyword }}
+            </span>
+          </div>
+          <span v-else class="text-xs text-[var(--color-ink-400)] italic">
+            No focus set. Default query used.
+          </span>
         </div>
       </header>
 

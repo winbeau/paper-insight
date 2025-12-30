@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from sqlmodel import Session, select
+from sqlalchemy import or_
 
 from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session
 from app.models import Paper, PaperRead, AppSettings
@@ -126,7 +127,9 @@ def get_papers(
     processed_only: bool = Query(False),
 ):
     """Get papers with optional filtering."""
-    query = select(Paper)
+    query = select(Paper).where(
+        or_(Paper.processing_status.is_(None), Paper.processing_status != "skipped")
+    )
 
     if processed_only:
         query = query.where(Paper.is_processed == True)
@@ -193,9 +196,13 @@ async def process_paper(paper_id: int, session: Session = Depends(get_session)):
 @app.get("/stats")
 def get_stats(session: Session = Depends(get_session)):
     """Get statistics about papers."""
-    total = session.exec(select(Paper)).all()
+    total = session.exec(
+        select(Paper).where(
+            or_(Paper.processing_status.is_(None), Paper.processing_status != "skipped")
+        )
+    ).all()
     processed = [p for p in total if p.is_processed]
-    high_relevance = [p for p in processed if p.relevance_score and p.relevance_score >= 7]
+    high_relevance = [p for p in processed if p.relevance_score and p.relevance_score >= 9]
 
     return {
         "total_papers": len(total),

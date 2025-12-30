@@ -5,8 +5,8 @@ defineProps<{
 
 function getScoreColor(score: number | null): string {
   if (score === null) return 'low'
-  if (score >= 8) return 'high'
-  if (score >= 5) return 'mid'
+  if (score >= 9) return 'high'
+  if (score >= 7) return 'mid'
   return 'low'
 }
 
@@ -28,7 +28,7 @@ function formatScore(score: number | null): string {
     ]"
   >
     <svg
-      v-if="score !== null && score >= 8"
+      v-if="score !== null && score >= 9"
       class="w-3.5 h-3.5 animate-pulse-subtle"
       fill="currentColor"
       viewBox="0 0 20 20"

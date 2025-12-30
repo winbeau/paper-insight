@@ -137,8 +137,14 @@ class ArxivBot:
             loop = asyncio.get_running_loop()
             
             llm = get_llm_brain()
+            settings = session.get(AppSettings, 1)
+            system_prompt_override = settings.system_prompt if settings else None
             analysis = await loop.run_in_executor(
-                None, llm.analyze_paper, paper.title, paper.abstract
+                None,
+                llm.analyze_paper,
+                paper.title,
+                paper.abstract,
+                system_prompt_override,
             )
             thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
 
@@ -152,8 +158,14 @@ class ArxivBot:
                 paper.relevance_reason = analysis.relevance_reason
                 paper.heuristic_idea = analysis.heuristic_idea
                 paper.is_processed = True
-                paper.processing_status = "processed"
                 paper.processed_at = datetime.utcnow()
+
+                if analysis.relevance_score >= 9:
+                    paper.processing_status = "processed"
+                elif analysis.relevance_score >= 5:
+                    paper.processing_status = "processed"
+                else:
+                    paper.processing_status = "skipped"
 
                 session.add(paper)
                 session.commit()

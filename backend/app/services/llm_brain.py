@@ -43,7 +43,12 @@ class LLMBrain:
         )
         self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-    def analyze_paper(self, title: str, abstract: str) -> Optional[LLMAnalysis]:
+    def analyze_paper(
+        self,
+        title: str,
+        abstract: str,
+        system_prompt_override: Optional[str] = None,
+    ) -> Optional[LLMAnalysis]:
         """Analyze a paper and return structured analysis."""
         user_prompt = f"""请分析以下论文：
 
@@ -52,12 +57,15 @@ class LLMBrain:
 摘要: {abstract}
 
 请按照系统提示中的JSON格式返回分析结果。"""
+        system_prompt = SYSTEM_PROMPT
+        if system_prompt_override:
+            system_prompt = f"{SYSTEM_PROMPT}\n\n用户补充要求：\n{system_prompt_override}"
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=1500,

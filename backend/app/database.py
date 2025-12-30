@@ -93,9 +93,6 @@ def ensure_paper_schema():
         )
         added.add("processing_status")
 
-    if not ddl_statements:
-        return
-
     final_columns = columns | added
     with engine.begin() as conn:
         for stmt in ddl_statements:
@@ -108,6 +105,16 @@ def ensure_paper_schema():
                     "SET processing_status = CASE "
                     "WHEN is_processed THEN 'processed' ELSE 'pending' END "
                     "WHERE processing_status IS NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    f"UPDATE {table_name} "
+                    "SET processing_status = 'skipped' "
+                    "WHERE is_processed = TRUE "
+                    "AND relevance_score IS NOT NULL "
+                    "AND relevance_score < 5 "
+                    "AND processing_status = 'processed'"
                 )
             )
 
