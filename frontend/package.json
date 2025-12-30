@@ -1,0 +1,27 @@
+{
+  "name": "paper-insight-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/markdown-it": "^14.1.2",
+    "@vitejs/plugin-vue": "^6.0.3",
+    "tailwindcss": "^4.1.18",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4",
+    "vue-tsc": "^3.2.1"
+  },
+  "dependencies": {
+    "@vueuse/core": "^14.1.0",
+    "axios": "^1.13.2",
+    "markdown-it": "^14.1.0",
+    "vue": "^3.5.26",
+    "vue-router": "^4.6.4"
+  }
+}

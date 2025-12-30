@@ -1,0 +1,162 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  /* Typography */
+  --font-display: 'Newsreader', Georgia, serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Ink Colors - Text */
+  --color-ink-900: #0f1419;
+  --color-ink-700: #3d4752;
+  --color-ink-400: #8899a6;
+  --color-ink-200: #c4cdd4;
+
+  /* Paper Colors - Backgrounds */
+  --color-paper-50: #fafaf9;
+  --color-paper-100: #f5f4f2;
+  --color-paper-200: #e8e6e3;
+  --color-paper-300: #d4d1cc;
+
+  /* Relevance Colors */
+  --color-relevance-high: #dc2626;
+  --color-relevance-high-bg: #fef2f2;
+  --color-relevance-mid: #d97706;
+  --color-relevance-mid-bg: #fffbeb;
+  --color-relevance-low: #6b7280;
+  --color-relevance-low-bg: #f3f4f6;
+
+  /* Accent Colors */
+  --color-accent-insight: #fef3c7;
+  --color-accent-insight-border: #f59e0b;
+  --color-accent-insight-text: #92400e;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(15, 20, 25, 0.08), 0 1px 2px rgba(15, 20, 25, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(15, 20, 25, 0.1), 0 2px 4px rgba(15, 20, 25, 0.06);
+  --shadow-sidebar: 1px 0 3px rgba(15, 20, 25, 0.05);
+}
+
+/* Base Styles */
+html {
+  font-family: var(--font-body);
+  color: var(--color-ink-900);
+  background-color: var(--color-paper-50);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Typography Utilities */
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-body {
+  font-family: var(--font-body);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-paper-100);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-200);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-400);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Card Transitions */
+.card-expand-enter-active,
+.card-expand-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.card-expand-enter-from,
+.card-expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+/* Markdown Content Styling */
+.markdown-content {
+  line-height: 1.7;
+}
+
+.markdown-content p {
+  margin-bottom: 0.75rem;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: var(--color-ink-900);
+}
+
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--color-paper-200);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+}
