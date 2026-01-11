@@ -1,7 +1,14 @@
 import axios from 'axios'
 import type { Paper, Stats, AppSettings } from '../types/paper'
 
-const baseURL = import.meta.env.VITE_API_BASE || 'https://winbeau-paper-insight-api.hf.space'
+const envBase = import.meta.env.VITE_API_BASE
+const isGithubPages =
+  typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')
+
+const baseURL =
+  isGithubPages && (!envBase || envBase.startsWith('/'))
+    ? 'https://winbeau-paper-insight-api.hf.space'
+    : (envBase || '/api')
 
 export const api = axios.create({
   baseURL,
