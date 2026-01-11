@@ -3,7 +3,7 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_CACHE_DIR=/tmp/uv-cache \
-    PATH="/root/.cargo/bin:$PATH"
+    PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libpq-dev curl \
