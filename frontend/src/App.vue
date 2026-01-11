@@ -4,7 +4,6 @@ import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './type
 import { fetchPapers, fetchStats, triggerFetch, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
-import KeywordCloud from './components/ui/KeywordCloud.vue'
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)

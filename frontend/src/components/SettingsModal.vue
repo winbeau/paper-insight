@@ -1,18 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import type { AppSettings } from '../types/paper'
 
 interface ArxivOption {
   code: string
   name: string
   desc: string
-}
-
-interface AppSettings {
-  id: number
-  research_focus: string
-  system_prompt: string
-  arxiv_categories: string[]
 }
 
 const emit = defineEmits(['close'])
