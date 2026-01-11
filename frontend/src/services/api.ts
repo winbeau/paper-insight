@@ -1,7 +1,7 @@
 import axios from 'axios'
 import type { Paper, Stats, AppSettings } from '../types/paper'
 
-const baseURL = import.meta.env.VITE_API_BASE || '/api'
+const baseURL = import.meta.env.VITE_API_BASE || 'https://winbeau-paper-insight-api.hf.space'
 
 export const api = axios.create({
   baseURL,
