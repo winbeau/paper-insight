@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
 import type { AppSettings } from '../types/paper'
+import { api } from '../services/api'
 
 interface ArxivOption {
   code: string
@@ -20,10 +20,6 @@ const settings = ref<AppSettings>({
   focus_keywords: [],
   system_prompt: '',
   arxiv_categories: [], // Default to empty, will be populated from API
-})
-
-const api = axios.create({
-  baseURL: '/api', // Proxy handles this
 })
 
 onMounted(async () => {

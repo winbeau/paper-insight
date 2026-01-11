@@ -1,8 +1,10 @@
 import axios from 'axios'
 import type { Paper, Stats, AppSettings } from '../types/paper'
 
-const api = axios.create({
-  baseURL: '/api',
+const baseURL = import.meta.env.VITE_API_BASE || '/api'
+
+export const api = axios.create({
+  baseURL,
   timeout: 30000,
 })
 

@@ -31,6 +31,7 @@ jobs:
         run: pnpm build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_API_BASE: ${{ secrets.VITE_API_BASE }}
         working-directory: frontend
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
