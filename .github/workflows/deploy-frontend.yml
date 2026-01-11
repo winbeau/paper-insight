@@ -31,7 +31,6 @@ jobs:
         run: pnpm build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
-          VITE_API_BASE: https://winbeau-paper-insight-api.hf.space
         working-directory: frontend
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
@@ -39,3 +38,5 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: frontend/dist
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
