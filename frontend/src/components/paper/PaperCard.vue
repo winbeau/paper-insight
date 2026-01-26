@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { Paper } from '../../types/paper'
+import { ref, computed, onUnmounted } from 'vue'
+import type { Paper, DifyAnalysisResult, StreamErrorEvent } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
-import { processPaper } from '../../services/api'
+import ThinkingPanel from '../ui/ThinkingPanel.vue'
+import { processPaperStream, getStreamErrorMessage } from '../../services/api'
 
 const props = defineProps<{
   paper: Paper
@@ -26,6 +27,14 @@ const previewOrigin = ref('origin-left')
 const pendingPreviewStyle = ref<{ left: string; top: string } | null>(null)
 const pendingPreviewOrigin = ref<string | null>(null)
 let reappearTimer: number | null = null
+
+// Streaming state
+const isStreaming = ref(false)
+const streamProgress = ref('')
+const streamThought = ref('')
+const streamError = ref<StreamErrorEvent | null>(null)
+const streamResult = ref<DifyAnalysisResult | null>(null)
+let streamAbortFn: (() => void) | null = null
 
 const formattedDate = computed(() => {
   const date = new Date(props.paper.published)
@@ -66,31 +75,65 @@ const isFailed = computed(() => {
 })
 
 const statusLabel = computed(() => {
-  if (statusValue.value === 'processing') return 'DeepSeek reasoning...'
-  if (statusValue.value === 'failed') return 'Analysis failed'
+  if (isStreaming.value) return 'Dify R1 reasoning...'
+  if (statusValue.value === 'processing') return 'Processing...'
+  if (statusValue.value === 'failed') return streamError.value
+    ? getStreamErrorMessage(streamError.value)
+    : 'Analysis failed'
   return 'Queued for analysis'
 })
 
 const statusTag = computed(() => {
+  if (isStreaming.value) return 'streaming'
   if (statusValue.value === 'processing') return 'processing'
   if (statusValue.value === 'failed') return 'failed'
   return 'pending'
 })
 
-async function handleRetry() {
-  if (isRetrying.value || isProcessing.value) return
-  isRetrying.value = true
-  localStatus.value = 'processing'
-  try {
-    await processPaper(props.paper.id)
-    localStatus.value = null
-    emit('refresh')
-  } catch (error) {
-    localStatus.value = 'failed'
-    console.error('Retry failed:', error)
-  } finally {
-    isRetrying.value = false
+// Cleanup on unmount
+onUnmounted(() => {
+  if (streamAbortFn) {
+    streamAbortFn()
+    streamAbortFn = null
   }
+})
+
+async function handleRetry() {
+  if (isRetrying.value || isProcessing.value || isStreaming.value) return
+
+  isRetrying.value = true
+  isStreaming.value = true
+  localStatus.value = 'processing'
+  streamProgress.value = ''
+  streamThought.value = ''
+  streamError.value = null
+  streamResult.value = null
+
+  const { abort } = processPaperStream(props.paper.id, {
+    onProgress: (event) => {
+      streamProgress.value = event.message
+    },
+    onThinking: (_chunk, accumulated) => {
+      streamThought.value = accumulated
+    },
+    onResult: (result) => {
+      streamResult.value = result
+    },
+    onError: (error) => {
+      streamError.value = error
+      localStatus.value = 'failed'
+      isStreaming.value = false
+      isRetrying.value = false
+    },
+    onDone: () => {
+      isStreaming.value = false
+      isRetrying.value = false
+      localStatus.value = null
+      emit('refresh')
+    },
+  })
+
+  streamAbortFn = abort
 }
 
 function toggleExpand() {
@@ -358,10 +401,20 @@ function handleMouseMove(event: MouseEvent) {
       v-if="!paper.is_processed"
       class="px-5 py-3 bg-[var(--color-paper-200)] rounded-b-xl border-t border-[var(--color-paper-300)]"
     >
+      <!-- Thinking Panel for streaming -->
+      <ThinkingPanel
+        v-if="isStreaming || streamThought || streamError"
+        :thought="streamThought"
+        :progress="streamProgress"
+        :is-streaming="isStreaming"
+        :error="streamError"
+        class="mb-3"
+      />
+
       <div class="flex items-center justify-between text-xs text-[var(--color-ink-400)]">
         <span class="flex items-center gap-2">
           <svg
-            v-if="isProcessing"
+            v-if="isProcessing || isStreaming"
             class="w-3.5 h-3.5 animate-spin"
             fill="none"
             viewBox="0 0 24 24"
@@ -376,16 +429,24 @@ function handleMouseMove(event: MouseEvent) {
             {{ statusTag }}
           </span>
           <button
-            v-if="isFailed"
+            v-if="isFailed && !isStreaming"
             class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"
             @click.stop="handleRetry"
             :disabled="isRetrying"
           >
             {{ isRetrying ? 'retrying' : 'retry' }}
           </button>
+          <button
+            v-if="!isFailed && !isStreaming && !isProcessing"
+            class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"
+            @click.stop="handleRetry"
+            :disabled="isRetrying"
+          >
+            analyze
+          </button>
         </div>
       </div>
-      <div v-if="isProcessing" class="relative mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-300)]">
+      <div v-if="isProcessing || isStreaming" class="relative mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-300)]">
         <div class="absolute inset-y-0 left-0 w-1/3 bg-[var(--color-ink-700)]/60 animate-progress-bar"></div>
       </div>
     </div>

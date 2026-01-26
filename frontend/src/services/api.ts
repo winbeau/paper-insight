@@ -1,5 +1,15 @@
 import axios from 'axios'
-import type { Paper, Stats, AppSettings } from '../types/paper'
+import type {
+  Paper,
+  Stats,
+  AppSettings,
+  DifyAnalysisResult,
+  StreamProgressEvent,
+  StreamThinkingEvent,
+  StreamAnswerEvent,
+  StreamErrorEvent,
+  StreamEventType,
+} from '../types/paper'
 
 const baseURL = import.meta.env.VITE_API_BASE || '/api'
 
@@ -46,4 +56,189 @@ export async function fetchSettings(): Promise<AppSettings> {
 export async function updateSettings(settings: AppSettings): Promise<AppSettings> {
   const { data } = await api.put<AppSettings>('/settings', settings)
   return data
+}
+
+// Streaming API Types
+export interface StreamCallbacks {
+  onProgress?: (event: StreamProgressEvent) => void
+  onThinking?: (thought: string, accumulated: string) => void
+  onAnswer?: (answer: string, accumulated: string) => void
+  onResult?: (result: DifyAnalysisResult) => void
+  onError?: (error: StreamErrorEvent) => void
+  onDone?: () => void
+}
+
+/**
+ * Process a paper with streaming response for real-time updates.
+ * Uses Server-Sent Events (SSE) to receive incremental updates.
+ */
+export function processPaperStream(
+  id: number,
+  callbacks: StreamCallbacks,
+): { abort: () => void } {
+  const url = `${baseURL}/papers/${id}/process/stream`
+  const abortController = new AbortController()
+
+  let accumulatedThought = ''
+  let accumulatedAnswer = ''
+
+  const processStream = async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        signal: abortController.signal,
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        callbacks.onError?.({
+          error: `http_${response.status}`,
+          message: errorText || `HTTP Error: ${response.status}`,
+        })
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        callbacks.onError?.({
+          error: 'no_reader',
+          message: 'Failed to get response reader',
+        })
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process complete SSE events (separated by double newlines)
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || '' // Keep incomplete event in buffer
+
+        for (const eventStr of events) {
+          if (!eventStr.trim()) continue
+
+          const { eventType, data } = parseSSEEvent(eventStr)
+          if (!eventType || !data) continue
+
+          handleStreamEvent(
+            eventType,
+            data,
+            callbacks,
+            { accumulatedThought, accumulatedAnswer },
+            (thought) => { accumulatedThought = thought },
+            (answer) => { accumulatedAnswer = answer },
+          )
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        return // Intentional abort
+      }
+      callbacks.onError?.({
+        error: 'stream_error',
+        message: (error as Error).message || 'Stream processing failed',
+      })
+    }
+  }
+
+  processStream()
+
+  return {
+    abort: () => abortController.abort(),
+  }
+}
+
+function parseSSEEvent(eventStr: string): {
+  eventType: StreamEventType | null
+  data: unknown
+} {
+  const lines = eventStr.trim().split('\n')
+  let eventType: StreamEventType | null = null
+  let dataStr = ''
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      eventType = line.slice(6).trim() as StreamEventType
+    } else if (line.startsWith('data:')) {
+      dataStr = line.slice(5).trim()
+    }
+  }
+
+  if (!dataStr) return { eventType: null, data: null }
+
+  try {
+    return { eventType, data: JSON.parse(dataStr) }
+  } catch {
+    return { eventType: null, data: null }
+  }
+}
+
+function handleStreamEvent(
+  eventType: StreamEventType,
+  data: unknown,
+  callbacks: StreamCallbacks,
+  accumulated: { accumulatedThought: string; accumulatedAnswer: string },
+  setThought: (thought: string) => void,
+  setAnswer: (answer: string) => void,
+) {
+  switch (eventType) {
+    case 'progress':
+      callbacks.onProgress?.(data as StreamProgressEvent)
+      break
+
+    case 'thinking': {
+      const thinkingData = data as StreamThinkingEvent
+      const newThought = accumulated.accumulatedThought + thinkingData.thought
+      setThought(newThought)
+      callbacks.onThinking?.(thinkingData.thought, newThought)
+      break
+    }
+
+    case 'answer': {
+      const answerData = data as StreamAnswerEvent
+      const newAnswer = accumulated.accumulatedAnswer + answerData.answer
+      setAnswer(newAnswer)
+      callbacks.onAnswer?.(answerData.answer, newAnswer)
+      break
+    }
+
+    case 'result':
+      callbacks.onResult?.(data as DifyAnalysisResult)
+      break
+
+    case 'error':
+      callbacks.onError?.(data as StreamErrorEvent)
+      break
+
+    case 'done':
+      callbacks.onDone?.()
+      break
+  }
+}
+
+/**
+ * Get error message for display based on error type.
+ */
+export function getStreamErrorMessage(error: StreamErrorEvent): string {
+  switch (error.error) {
+    case 'entity_too_large':
+      return '论文内容过长，请尝试手动处理'
+    case 'timeout':
+      return '分析超时，请稍后重试'
+    case 'rate_limit':
+      return '请求过于频繁，请稍后重试'
+    case 'dify_error':
+      return `Dify服务错误: ${error.message}`
+    default:
+      return error.message || '未知错误'
+  }
 }

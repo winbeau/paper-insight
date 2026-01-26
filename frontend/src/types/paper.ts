@@ -36,3 +36,52 @@ export interface AppSettings {
 
 export type FilterType = 'all' | 'high' | 'low'
 export type StatusFilter = 'all' | 'processed' | 'pending'
+
+// Dify Streaming Types
+export interface TechnicalMapping {
+  token_vs_patch: string
+  temporal_logic: string
+  frequency_domain: string
+}
+
+export interface DifyAnalysisResult {
+  summary_zh: string
+  relevance_score: number
+  relevance_reason: string
+  technical_mapping: TechnicalMapping
+  heuristic_idea: string
+  thought_process: string | null
+}
+
+export interface StreamProgressEvent {
+  status: string
+  message: string
+}
+
+export interface StreamThinkingEvent {
+  thought: string
+}
+
+export interface StreamAnswerEvent {
+  answer: string
+}
+
+export interface StreamErrorEvent {
+  error: string
+  message: string
+}
+
+export interface StreamDoneEvent {
+  status: string
+}
+
+export type StreamEventType = 'progress' | 'thinking' | 'answer' | 'result' | 'error' | 'done'
+
+export interface StreamState {
+  isStreaming: boolean
+  progress: string
+  thought: string
+  answer: string
+  result: DifyAnalysisResult | null
+  error: StreamErrorEvent | null
+}

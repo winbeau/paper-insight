@@ -1,4 +1,5 @@
 import asyncio
+import os
 import arxiv
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -6,8 +7,20 @@ from sqlmodel import Session, select
 
 from app.models import Paper, PaperCreate, AppSettings
 from app.database import get_sync_session
-from app.services.llm_brain import get_llm_brain
 from app.services.pdf_renderer import generate_thumbnail
+
+
+def _get_analysis_client():
+    """
+    Get the appropriate analysis client based on configuration.
+    Prefers Dify if DIFY_API_KEY is set, otherwise falls back to LLMBrain.
+    """
+    if os.getenv("DIFY_API_KEY"):
+        from app.services.dify_client import get_dify_client
+        return get_dify_client(), "dify"
+    else:
+        from app.services.llm_brain import get_llm_brain
+        return get_llm_brain(), "deepseek"
 
 class ArxivBot:
     """Bot for fetching and processing arXiv papers."""
@@ -133,19 +146,35 @@ class ArxivBot:
             session.commit()
             session.refresh(paper)
 
-            # Execute LLM analysis and thumbnail generation sequentially
-            loop = asyncio.get_running_loop()
-            
-            llm = get_llm_brain()
+            # Get the appropriate analysis client
+            client, client_type = _get_analysis_client()
             settings = session.get(AppSettings, 1)
             system_prompt_override = settings.system_prompt if settings else None
-            analysis = await loop.run_in_executor(
-                None,
-                llm.analyze_paper,
-                paper.title,
-                paper.abstract,
-                system_prompt_override,
-            )
+
+            # Execute analysis based on client type
+            loop = asyncio.get_running_loop()
+
+            if client_type == "dify":
+                # Use Dify client (async, non-streaming for batch processing)
+                result = await client.analyze_paper(
+                    paper.title,
+                    paper.abstract,
+                    user_id=f"batch-paper-{paper.id}",
+                )
+                if result:
+                    analysis = client.to_llm_analysis(result)
+                else:
+                    analysis = None
+            else:
+                # Use legacy DeepSeek client (sync, run in executor)
+                analysis = await loop.run_in_executor(
+                    None,
+                    client.analyze_paper,
+                    paper.title,
+                    paper.abstract,
+                    system_prompt_override,
+                )
+
             thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
 
             # Update thumbnail regardless of relevance (visuals are good)

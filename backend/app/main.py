@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 from typing import List, Optional
 import re
+import json
 from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pathlib import Path
 from sqlmodel import Session, select
 from sqlalchemy import or_
@@ -11,6 +13,13 @@ from sqlalchemy import or_
 from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session
 from app.models import Paper, PaperRead, AppSettings
 from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
+from app.services.dify_client import (
+    get_dify_client,
+    DifyClientError,
+    DifyEntityTooLargeError,
+    DifyTimeoutError,
+    DifyRateLimitError,
+)
 from app.constants import ARXIV_OPTIONS
 
 
@@ -191,6 +200,150 @@ async def process_paper(paper_id: int, session: Session = Depends(get_session)):
         return {"message": "Paper processed successfully", "paper_id": paper_id}
     else:
         raise HTTPException(status_code=500, detail="Failed to process paper")
+
+
+@app.get("/papers/{paper_id}/process/stream")
+async def process_paper_stream(paper_id: int, session: Session = Depends(get_session)):
+    """
+    Process a paper with streaming response for real-time updates.
+
+    Returns Server-Sent Events (SSE) with the following event types:
+    - thinking: R1 reasoning process (thought field)
+    - answer: Partial answer content
+    - progress: Processing progress updates
+    - result: Final structured analysis result
+    - error: Error information
+    - done: Stream completion signal
+    """
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    async def generate_events():
+        """Generate SSE events for paper analysis."""
+        try:
+            # Update paper status
+            paper.processing_status = "processing"
+            session.add(paper)
+            session.commit()
+
+            # Send initial progress event
+            yield f"event: progress\ndata: {json.dumps({'status': 'started', 'message': '开始分析论文...'})}\n\n"
+
+            dify_client = get_dify_client()
+            thought_parts = []
+            answer_parts = []
+            final_outputs = None
+
+            async for event in dify_client.analyze_paper_stream(
+                paper.title,
+                paper.abstract,
+                user_id=f"paper-{paper_id}",
+            ):
+                # Handle thought (R1 thinking process)
+                if event.thought:
+                    thought_parts.append(event.thought)
+                    yield f"event: thinking\ndata: {json.dumps({'thought': event.thought})}\n\n"
+
+                # Handle answer chunks
+                if event.answer:
+                    answer_parts.append(event.answer)
+                    yield f"event: answer\ndata: {json.dumps({'answer': event.answer})}\n\n"
+
+                # Handle workflow events
+                if event.event == "workflow_started":
+                    yield f"event: progress\ndata: {json.dumps({'status': 'workflow_started', 'message': 'Dify工作流已启动'})}\n\n"
+                elif event.event == "node_started":
+                    node_title = event.data.get("data", {}).get("title", "")
+                    if node_title:
+                        yield f"event: progress\ndata: {json.dumps({'status': 'node_started', 'message': f'执行节点: {node_title}'})}\n\n"
+                elif event.event == "workflow_finished":
+                    if event.outputs:
+                        final_outputs = event.outputs
+
+            # Process final result
+            if final_outputs:
+                result = dify_client._parse_outputs(final_outputs, "".join(thought_parts))
+            elif answer_parts:
+                result = dify_client._parse_answer("".join(answer_parts), "".join(thought_parts))
+            else:
+                raise DifyClientError("No output received from Dify workflow")
+
+            # Convert to LLMAnalysis for database storage
+            analysis = dify_client.to_llm_analysis(result)
+
+            # Update paper with results
+            from datetime import datetime
+            paper.summary_zh = analysis.summary_zh
+            paper.relevance_score = analysis.relevance_score
+            paper.relevance_reason = analysis.relevance_reason
+            paper.heuristic_idea = analysis.heuristic_idea
+            paper.is_processed = True
+            paper.processed_at = datetime.utcnow()
+
+            if analysis.relevance_score >= 5:
+                paper.processing_status = "processed"
+            else:
+                paper.processing_status = "skipped"
+
+            session.add(paper)
+            session.commit()
+
+            # Send final result
+            result_data = {
+                "summary_zh": result.summary_zh,
+                "relevance_score": result.relevance_score,
+                "relevance_reason": result.relevance_reason,
+                "technical_mapping": {
+                    "token_vs_patch": result.technical_mapping.token_vs_patch,
+                    "temporal_logic": result.technical_mapping.temporal_logic,
+                    "frequency_domain": result.technical_mapping.frequency_domain,
+                },
+                "heuristic_idea": result.heuristic_idea,
+                "thought_process": result.thought_process,
+            }
+            yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
+
+        except DifyEntityTooLargeError as e:
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            yield f"event: error\ndata: {json.dumps({'error': 'entity_too_large', 'message': str(e)})}\n\n"
+
+        except DifyTimeoutError as e:
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            yield f"event: error\ndata: {json.dumps({'error': 'timeout', 'message': str(e)})}\n\n"
+
+        except DifyRateLimitError as e:
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            yield f"event: error\ndata: {json.dumps({'error': 'rate_limit', 'message': str(e)})}\n\n"
+
+        except DifyClientError as e:
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            yield f"event: error\ndata: {json.dumps({'error': 'dify_error', 'message': str(e)})}\n\n"
+
+        except Exception as e:
+            paper.processing_status = "failed"
+            session.add(paper)
+            session.commit()
+            yield f"event: error\ndata: {json.dumps({'error': 'unknown', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 @app.get("/stats")
