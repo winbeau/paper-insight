@@ -82,7 +82,7 @@ class ArxivBot:
         self,
         session: Session,
         max_results: int = 50,
-        hours_back: int = 48,
+        hours_back: int = 168,  # 7 days to catch weekly arXiv updates
     ) -> List[PaperCreate]:
         """Fetch recent targeted papers from arXiv."""
         query = self.build_query(session)
@@ -225,7 +225,7 @@ async def run_daily_fetch_async():
         # Using run_in_executor to avoid blocking the event loop if this takes time
         # We pass the session to fetch_recent_papers
         loop = asyncio.get_running_loop()
-        papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 48)
+        papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 168)
         print(f"Fetched {len(papers)} papers from arXiv")
 
         # Save to database (Sync)
