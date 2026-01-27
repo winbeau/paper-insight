@@ -22,26 +22,18 @@ load_dotenv()
 
 
 # Default idea template for paper analysis
-DEFAULT_IDEA_INPUT = """研究主题：基于 Head-level 稀疏索引的视频 DiT 自适应注意力推理加速方案
+# This should be overridden by app settings (research_focus)
+DEFAULT_IDEA_INPUT = """请在应用设置中配置你的研究方向 (research_focus)，描述你当前的研究主题、技术背景和核心方法论。
 
-技术背景与动机：
-在自回归视频生成模型（如 Self-Forcing DiT）中，观测到 Self-attention 存在显著的 head-level 差异性：不同 Head 对视频连贯性的建模窗口长度不一。传统的全张量计算在处理这种非均匀滑窗时会产生大量补齐（Padding）开销，导致显存冗余及 Ragged Tensor（参差不齐张量）处理难题。
-
-核心方法论：
-1. 块矩阵平展化存储：将 Q, K, V 向量按 [1, D] 分块，作为最小存储模块
-2. 前缀和哈希索引：建立动态偏移量索引，实现对非均匀序列的快速定位
-3. 高精细度 Attention Kernel 重构：利用索引动态切片提取对应 Head 的 Ragged Tensor
-
-预期科学贡献：
-- 显存优化：通过消除 Ragged Tensor 的空位填充，显著降低长视频生成时的 KV Cache 压力
-- 频域关联：支持根据 FFT 分析得出的"6 帧周期特性"，为不同 Head 动态分配最佳滑窗长度
+配置示例：
+- 研究主题：你正在研究什么？
+- 技术背景与动机：为什么要做这个研究？有什么痛点？
+- 核心方法论：你打算用什么方法解决？
+- 预期科学贡献：希望达成什么效果？
 """
 
-DEFAULT_QUERY = """请对上传的 PDF 论文进行深入分析，结合我提供的研究 Idea，输出结构化的论文洞察报告。
-重点关注：
-1. 该论文的核心贡献与我的研究方向的契合度
-2. 技术方法的可迁移性（特别是 LLM KV Cache → DiT 的映射）
-3. 可以借鉴的具体实验方案或算法设计"""
+# Simple trigger query - let Dify workflow prompt handle the analysis logic
+DEFAULT_QUERY = """请分析上传的论文，结合我的研究 Idea 进行跨领域洞察分析。"""
 
 
 @dataclass
