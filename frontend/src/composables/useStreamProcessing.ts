@@ -196,7 +196,9 @@ export function useStreamProcessing(
   }
 
   async function handleRetry() {
-    if (isRetrying.value || isProcessing.value || isStreaming.value) return
+    // Only block if already retrying or actively streaming
+    // Allow retry even if DB status is "processing" (stuck state after page refresh)
+    if (isRetrying.value || isStreaming.value) return
 
     isRetrying.value = true
     isStreaming.value = true
