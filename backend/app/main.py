@@ -612,7 +612,6 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             thought_parts = []
             answer_parts = []
             final_outputs = None
-            received_events = []  # Track event types for debugging
 
             async for event in dify_client.analyze_paper_stream(
                 pdf_url=paper.pdf_url,
@@ -620,8 +619,6 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 user_id=f"paper-{paper_id}",
                 idea_input=idea_input,
             ):
-                received_events.append(event.event)
-
                 # Handle thought (R1 thinking process)
                 if event.thought:
                     thought_parts.append(event.thought)
@@ -644,14 +641,8 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                     if node_title:
                         yield f"event: progress\ndata: {json.dumps({'status': 'node_finished', 'message': f'完成节点: {node_title}'})}\n\n"
                 elif event.event == "workflow_finished":
-                    # Debug: log the raw data structure
-                    print(f"[Dify Debug] workflow_finished data keys: {list(event.data.keys())}")
-                    if "data" in event.data:
-                        print(f"[Dify Debug] event.data.data keys: {list(event.data['data'].keys()) if isinstance(event.data['data'], dict) else 'not a dict'}")
-
                     if event.outputs:
                         final_outputs = event.outputs
-                    # Also try to extract from event.data directly
                     elif not final_outputs:
                         data = event.data
                         if isinstance(data.get("data"), dict) and "outputs" in data["data"]:
@@ -665,7 +656,7 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                                 final_outputs = nested["outputs"]
 
                     if final_outputs:
-                        print(f"[Dify Debug] Successfully extracted outputs with keys: {list(final_outputs.keys()) if isinstance(final_outputs, dict) else 'not a dict'}")
+                        pass  # outputs extracted successfully
                 # Handle message_end event (some Dify versions use this)
                 elif event.event == "message_end":
                     if event.outputs and not final_outputs:
@@ -673,49 +664,26 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 # Handle Dify error event
                 elif event.event == "error":
                     error_msg = event.data.get("message", "") or event.data.get("error", "Unknown Dify error")
-                    print(f"[Dify Debug] Error event received: {error_msg}")
                     raise DifyClientError(f"Dify error: {error_msg}")
 
-            # Stream loop ended
-            print(f"[Dify Debug] Stream loop ended. Events received: {list(set(received_events))}")
-            print(f"[Dify Debug] final_outputs is None: {final_outputs is None}, answer_parts count: {len(answer_parts)}")
-
             # Process final result
-            print(f"[Dify Debug] Processing final result. final_outputs: {final_outputs is not None}, answer_parts: {len(answer_parts)}")
             if final_outputs:
-                print(f"[Dify Debug] Parsing outputs...")
                 result = dify_client._parse_outputs(final_outputs, "".join(thought_parts))
-                print(f"[Dify Debug] Parsed outputs successfully")
             elif answer_parts:
-                print(f"[Dify Debug] Parsing answer parts...")
                 result = dify_client._parse_answer("".join(answer_parts), "".join(thought_parts))
-                print(f"[Dify Debug] Parsed answer successfully")
             else:
-                # Log debug info
-                unique_events = list(set(received_events))
-                print(f"[Dify Debug] Paper {paper_id}: No output. Events received: {unique_events}")
-                raise DifyClientError(f"No output received from Dify workflow. Events: {unique_events}")
+                raise DifyClientError("No output received from Dify workflow")
 
             # Convert to LLMAnalysis for database storage
-            print(f"[Dify Debug] Converting to LLMAnalysis...")
-            print(f"[Dify Debug] result.paper_essence: {result.paper_essence[:200] if result.paper_essence else 'None'}...")
-            print(f"[Dify Debug] result.relevance_score: {result.relevance_score}")
-            print(f"[Dify Debug] result.heuristic_suggestion: {result.heuristic_suggestion[:200] if result.heuristic_suggestion else 'None'}...")
             analysis = dify_client.to_llm_analysis(result)
 
             # Generate thumbnail if not already present
             if not paper.thumbnail_url:
-                print(f"[Dify Debug] Generating thumbnail...")
                 thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
                 if thumbnail_url:
                     paper.thumbnail_url = thumbnail_url
-                print(f"[Dify Debug] Thumbnail done")
 
             # Update paper with results
-            print(f"[Dify Debug] Updating paper in database...")
-            print(f"[Dify Debug] analysis.paper_essence: {analysis.paper_essence[:100] if analysis.paper_essence else 'EMPTY'}...")
-            print(f"[Dify Debug] analysis.concept_bridging_str: {analysis.concept_bridging_str[:100] if analysis.concept_bridging_str else 'EMPTY'}...")
-            print(f"[Dify Debug] analysis.visual_verification: {analysis.visual_verification[:100] if analysis.visual_verification else 'EMPTY'}...")
             from datetime import datetime
             paper.paper_essence = analysis.paper_essence
             paper.concept_bridging = analysis.concept_bridging_str
@@ -733,10 +701,8 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
             session.add(paper)
             session.commit()
-            print(f"[Dify Debug] Database committed successfully")
 
             # Send final result
-            print(f"[Dify Debug] Sending result event...")
             result_data = {
                 "paper_essence": result.paper_essence,
                 "concept_bridging": {
@@ -751,9 +717,7 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 "thought_process": result.thought_process,
             }
             yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
-            print(f"[Dify Debug] Result event sent, sending done event...")
             yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
-            print(f"[Dify Debug] Done event sent successfully!")
 
         except DifyEntityTooLargeError as e:
             paper.processing_status = "failed"
