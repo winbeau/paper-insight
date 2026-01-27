@@ -244,6 +244,58 @@ def fetch_papers(
     return {"message": "Paper fetch started in background"}
 
 
+@app.get("/papers/fetch/stream")
+async def fetch_papers_stream(session: Session = Depends(get_session)):
+    """
+    Fetch papers from arXiv with streaming progress updates.
+    Only fetches and saves papers - does NOT process them.
+    Use /papers/pending to get IDs for processing via individual streams.
+
+    Returns Server-Sent Events (SSE) with the following event types:
+    - started: Fetch started
+    - fetching: Fetching from arXiv
+    - saving: Saving papers to database
+    - done: Fetch completed with count of new papers
+    """
+    import asyncio
+
+    async def generate_events():
+        try:
+            yield f"event: started\ndata: {json.dumps({'status': 'started'})}\n\n"
+            yield f"event: fetching\ndata: {json.dumps({'status': 'fetching', 'message': '正在从 arXiv 获取论文...'})}\n\n"
+
+            bot = get_arxiv_bot()
+
+            # Fetch papers from arXiv (sync operation, run in executor)
+            loop = asyncio.get_running_loop()
+            papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 168)
+
+            yield f"event: fetched\ndata: {json.dumps({'status': 'fetched', 'message': f'获取到 {len(papers)} 篇论文', 'count': len(papers)})}\n\n"
+            yield f"event: saving\ndata: {json.dumps({'status': 'saving', 'message': '正在保存到数据库...'})}\n\n"
+
+            # Save papers to database
+            saved_count = 0
+            for paper_data in papers:
+                paper = bot.save_paper(session, paper_data)
+                if paper:
+                    saved_count += 1
+
+            yield f"event: done\ndata: {json.dumps({'status': 'done', 'fetched': len(papers), 'saved': saved_count, 'message': f'保存了 {saved_count} 篇新论文'})}\n\n"
+
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/papers/process/batch")
 def process_papers_batch(
     background_tasks: BackgroundTasks,

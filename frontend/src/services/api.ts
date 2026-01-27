@@ -53,6 +53,119 @@ export async function triggerFetch(): Promise<{ message: string }> {
   return data
 }
 
+// Fetch stream types
+export interface FetchDoneEvent {
+  status: 'done'
+  fetched: number
+  saved: number
+  message: string
+}
+
+export interface FetchStreamCallbacks {
+  onStarted?: () => void
+  onFetching?: (message: string) => void
+  onFetched?: (count: number, message: string) => void
+  onSaving?: (message: string) => void
+  onDone?: (event: FetchDoneEvent) => void
+  onError?: (error: Error) => void
+}
+
+/**
+ * Fetch papers from arXiv with streaming progress.
+ * Only fetches and saves - does NOT process papers.
+ */
+export function fetchPapersStream(
+  callbacks: FetchStreamCallbacks,
+): { abort: () => void } {
+  const url = `${baseURL}/papers/fetch/stream`
+  const abortController = new AbortController()
+
+  const processStream = async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+        signal: abortController.signal,
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        callbacks.onError?.(new Error(errorText || `HTTP Error: ${response.status}`))
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        callbacks.onError?.(new Error('Failed to get response reader'))
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || ''
+
+        for (const eventStr of events) {
+          if (!eventStr.trim()) continue
+
+          const lines = eventStr.trim().split('\n')
+          let eventType = ''
+          let dataStr = ''
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim()
+            } else if (line.startsWith('data:')) {
+              dataStr = line.slice(5).trim()
+            }
+          }
+
+          if (!dataStr) continue
+
+          try {
+            const data = JSON.parse(dataStr)
+            switch (eventType) {
+              case 'started':
+                callbacks.onStarted?.()
+                break
+              case 'fetching':
+                callbacks.onFetching?.(data.message)
+                break
+              case 'fetched':
+                callbacks.onFetched?.(data.count, data.message)
+                break
+              case 'saving':
+                callbacks.onSaving?.(data.message)
+                break
+              case 'done':
+                callbacks.onDone?.(data as FetchDoneEvent)
+                break
+              case 'error':
+                callbacks.onError?.(new Error(data.error))
+                break
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return
+      callbacks.onError?.(error as Error)
+    }
+  }
+
+  processStream()
+
+  return { abort: () => abortController.abort() }
+}
+
 export async function triggerBatchProcess(): Promise<{ message: string; count: number }> {
   const { data } = await api.post<{ message: string; count: number }>('/papers/process/batch')
   return data
