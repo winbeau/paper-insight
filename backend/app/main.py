@@ -164,6 +164,17 @@ def get_paper(paper_id: int, session: Session = Depends(get_session)):
     return paper
 
 
+@app.delete("/papers/{paper_id}")
+def delete_paper(paper_id: int, session: Session = Depends(get_session)):
+    """Delete a specific paper by ID."""
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    session.delete(paper)
+    session.commit()
+    return {"message": "Paper deleted successfully", "paper_id": paper_id}
+
+
 @app.get("/papers/arxiv/{arxiv_id}", response_model=PaperRead)
 def get_paper_by_arxiv_id(arxiv_id: str, session: Session = Depends(get_session)):
     """Get a specific paper by arXiv ID."""

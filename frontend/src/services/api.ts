@@ -33,6 +33,11 @@ export async function fetchPaper(id: number): Promise<Paper> {
   return data
 }
 
+export async function deletePaper(id: number): Promise<{ message: string }> {
+  const { data } = await api.delete<{ message: string }>(`/papers/${id}`)
+  return data
+}
+
 export async function fetchStats(): Promise<Stats> {
   const { data } = await api.get<Stats>('/stats')
   return data
