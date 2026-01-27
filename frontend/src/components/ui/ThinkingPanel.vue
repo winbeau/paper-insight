@@ -110,7 +110,7 @@ function toggleCollapse() {
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </span>
-                <span class="truncate max-w-[56px]">{{ step.label }}</span>
+                <span class="truncate max-w-[68px]">{{ step.label }}</span>
               </div>
               <!-- Parallel separator | -->
               <span v-if="stepIndex < group.steps.length - 1" class="text-gray-300 text-[10px] font-bold mx-0.5">|</span>
@@ -142,7 +142,7 @@ function toggleCollapse() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </span>
-            <span class="truncate max-w-[56px]">{{ group.steps[0].label }}</span>
+            <span class="truncate max-w-[68px]">{{ group.steps[0].label }}</span>
           </div>
 
           <!-- Connector arrow (except last group) -->

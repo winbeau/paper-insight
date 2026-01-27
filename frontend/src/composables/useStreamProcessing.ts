@@ -10,6 +10,7 @@ export const WORKFLOW_STEPS: Array<{ label: string; group?: number }> = [
   { label: '用户输入' },
   { label: 'Parse File', group: 1 },
   { label: '知识检索', group: 1 },
+  { label: 'IMAGE-LLM', group: 1 },
   { label: 'LLM' },
   { label: '整合输出' },
 ]
