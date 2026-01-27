@@ -670,11 +670,20 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                     print(f"[Dify Debug] Error event received: {error_msg}")
                     raise DifyClientError(f"Dify error: {error_msg}")
 
+            # Stream loop ended
+            print(f"[Dify Debug] Stream loop ended. Events received: {list(set(received_events))}")
+            print(f"[Dify Debug] final_outputs is None: {final_outputs is None}, answer_parts count: {len(answer_parts)}")
+
             # Process final result
+            print(f"[Dify Debug] Processing final result. final_outputs: {final_outputs is not None}, answer_parts: {len(answer_parts)}")
             if final_outputs:
+                print(f"[Dify Debug] Parsing outputs...")
                 result = dify_client._parse_outputs(final_outputs, "".join(thought_parts))
+                print(f"[Dify Debug] Parsed outputs successfully")
             elif answer_parts:
+                print(f"[Dify Debug] Parsing answer parts...")
                 result = dify_client._parse_answer("".join(answer_parts), "".join(thought_parts))
+                print(f"[Dify Debug] Parsed answer successfully")
             else:
                 # Log debug info
                 unique_events = list(set(received_events))
@@ -682,15 +691,19 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 raise DifyClientError(f"No output received from Dify workflow. Events: {unique_events}")
 
             # Convert to LLMAnalysis for database storage
+            print(f"[Dify Debug] Converting to LLMAnalysis...")
             analysis = dify_client.to_llm_analysis(result)
 
             # Generate thumbnail if not already present
             if not paper.thumbnail_url:
+                print(f"[Dify Debug] Generating thumbnail...")
                 thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
                 if thumbnail_url:
                     paper.thumbnail_url = thumbnail_url
+                print(f"[Dify Debug] Thumbnail done")
 
             # Update paper with results
+            print(f"[Dify Debug] Updating paper in database...")
             from datetime import datetime
             paper.summary_zh = analysis.summary_zh
             paper.relevance_score = analysis.relevance_score
@@ -706,8 +719,10 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
             session.add(paper)
             session.commit()
+            print(f"[Dify Debug] Database committed successfully")
 
             # Send final result
+            print(f"[Dify Debug] Sending result event...")
             result_data = {
                 "summary_zh": result.summary_zh,
                 "relevance_score": result.relevance_score,
@@ -721,7 +736,9 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 "thought_process": result.thought_process,
             }
             yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
+            print(f"[Dify Debug] Result event sent, sending done event...")
             yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
+            print(f"[Dify Debug] Done event sent successfully!")
 
         except DifyEntityTooLargeError as e:
             paper.processing_status = "failed"
