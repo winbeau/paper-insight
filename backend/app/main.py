@@ -698,6 +698,9 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
             # Convert to LLMAnalysis for database storage
             print(f"[Dify Debug] Converting to LLMAnalysis...")
+            print(f"[Dify Debug] result.paper_essence: {result.paper_essence[:200] if result.paper_essence else 'None'}...")
+            print(f"[Dify Debug] result.relevance_score: {result.relevance_score}")
+            print(f"[Dify Debug] result.heuristic_suggestion: {result.heuristic_suggestion[:200] if result.heuristic_suggestion else 'None'}...")
             analysis = dify_client.to_llm_analysis(result)
 
             # Generate thumbnail if not already present
@@ -710,6 +713,9 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
             # Update paper with results
             print(f"[Dify Debug] Updating paper in database...")
+            print(f"[Dify Debug] analysis.paper_essence: {analysis.paper_essence[:100] if analysis.paper_essence else 'EMPTY'}...")
+            print(f"[Dify Debug] analysis.concept_bridging_str: {analysis.concept_bridging_str[:100] if analysis.concept_bridging_str else 'EMPTY'}...")
+            print(f"[Dify Debug] analysis.visual_verification: {analysis.visual_verification[:100] if analysis.visual_verification else 'EMPTY'}...")
             from datetime import datetime
             paper.paper_essence = analysis.paper_essence
             paper.concept_bridging = analysis.concept_bridging_str

@@ -2,7 +2,7 @@
 import { ref, computed, toRef, watch, onMounted, onUnmounted } from 'vue'
 import type { Paper } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
-import HeuristicBox from '../ui/HeuristicBox.vue'
+import AnalysisBox from '../ui/AnalysisBox.vue'
 import ThinkingPanel from '../ui/ThinkingPanel.vue'
 import ThumbnailPreview from './ThumbnailPreview.vue'
 import PaperContextMenu from './PaperContextMenu.vue'
@@ -214,29 +214,24 @@ function toggleExpand() {
         </button>
       </div>
 
-      <!-- Heuristic Suggestion (Focal Point) -->
-      <HeuristicBox :content="paper.heuristic_suggestion" class="mb-4" />
+      <!-- Analysis Box (Focal Point: paper_essence, concept_bridging, relevance_reason) -->
+      <AnalysisBox
+        :paper-essence="paper.paper_essence"
+        :concept-bridging="paper.concept_bridging"
+        :relevance-reason="paper.relevance_reason"
+        class="mb-4"
+      />
 
       <!-- Expanded Content -->
       <Transition name="card-expand">
         <div v-if="isExpanded" class="space-y-4 mb-4 animate-fade-in">
-          <!-- Paper Essence (论文精华) -->
-          <div v-if="paper.paper_essence">
+          <!-- Heuristic Suggestion (实验建议) -->
+          <div v-if="paper.heuristic_suggestion">
             <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
-              论文精华
+              Heuristic Suggestion
             </h3>
             <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
-              {{ paper.paper_essence }}
-            </p>
-          </div>
-
-          <!-- Concept Bridging (概念桥接) -->
-          <div v-if="paper.concept_bridging">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
-              概念桥接
-            </h3>
-            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
-              {{ paper.concept_bridging }}
+              {{ paper.heuristic_suggestion }}
             </p>
           </div>
 
@@ -273,16 +268,6 @@ function toggleExpand() {
                 :origin="previewOrigin"
               />
             </div>
-          </div>
-
-          <!-- Relevance Reason -->
-          <div v-if="paper.relevance_reason">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
-              相关性分析
-            </h3>
-            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
-              {{ paper.relevance_reason }}
-            </p>
           </div>
         </div>
       </Transition>

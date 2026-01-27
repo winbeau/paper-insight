@@ -235,6 +235,12 @@ class DifyClient:
 
         # Step 3: Send chat request with file reference
         body = self._build_chat_request(query, idea_input, file_id, user_id)
+
+        # Log what we're sending to Dify
+        print(f"[Dify Request] idea_input length: {len(idea_input)}")
+        print(f"[Dify Request] idea_input preview: {idea_input[:500]}...")
+        print(f"[Dify Request] query: {query}")
+
         headers = {
             **self._get_auth_headers(),
             "Content-Type": "application/json",
@@ -290,8 +296,16 @@ class DifyClient:
 
         try:
             data = json.loads(data_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            print(f"[Dify SSE] JSON decode error: {e}")
+            print(f"[Dify SSE] Raw data_str: {data_str[:500]}")
             return None
+
+        # Log important events
+        if event_type in ("workflow_finished", "message_end", "agent_message"):
+            print(f"[Dify SSE] Event type: {event_type}")
+            print(f"[Dify SSE] Full data keys: {list(data.keys())}")
+            print(f"[Dify SSE] Full data: {json.dumps(data, ensure_ascii=False, indent=2)[:2000]}")
 
         event = DifyStreamEvent(
             event=event_type or data.get("event", ""),
@@ -372,6 +386,11 @@ class DifyClient:
         thought_process: str = "",
     ) -> DifyAnalysisResult:
         """Parse Dify workflow outputs into DifyAnalysisResult."""
+        # Log what we received
+        print(f"[Dify Parse] _parse_outputs called")
+        print(f"[Dify Parse] outputs keys: {list(outputs.keys())}")
+        print(f"[Dify Parse] outputs: {json.dumps(outputs, ensure_ascii=False, indent=2)[:3000]}")
+
         # If outputs only contains 'answer' (text with embedded JSON), extract from it
         if "answer" in outputs and "relevance_score" not in outputs:
             answer_text = outputs["answer"]
@@ -464,7 +483,7 @@ class DifyClient:
             if parts:
                 concept_bridging_str = "\n".join(parts)
 
-        return LLMAnalysis(
+        analysis = LLMAnalysis(
             paper_essence=result.paper_essence,
             concept_bridging_str=concept_bridging_str,
             visual_verification=result.visual_verification,
@@ -472,6 +491,14 @@ class DifyClient:
             relevance_reason=result.relevance_reason,
             heuristic_suggestion=result.heuristic_suggestion,
         )
+
+        # Log what we're returning
+        print(f"[Dify to_llm_analysis] paper_essence: {analysis.paper_essence[:100] if analysis.paper_essence else 'EMPTY'}...")
+        print(f"[Dify to_llm_analysis] concept_bridging_str: {analysis.concept_bridging_str[:100] if analysis.concept_bridging_str else 'EMPTY'}...")
+        print(f"[Dify to_llm_analysis] visual_verification: {analysis.visual_verification[:100] if analysis.visual_verification else 'EMPTY'}...")
+        print(f"[Dify to_llm_analysis] relevance_score: {analysis.relevance_score}")
+
+        return analysis
 
 
 # Singleton instance
