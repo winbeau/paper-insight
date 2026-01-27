@@ -154,10 +154,8 @@ function handleProcessingDone(paperId: number, _success: boolean) {
   newSet.delete(paperId)
   processingPaperIds.value = newSet
 
-  // Refresh data to update UI
-  loadData()
-
-  // Start next paper in queue
+  // Start next paper in queue IMMEDIATELY
+  // Note: loadData() is already called by the PaperCard's @refresh event
   startNextBatch()
 }
 
