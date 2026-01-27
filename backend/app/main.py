@@ -178,6 +178,21 @@ def get_papers(
     return papers
 
 
+@app.get("/papers/pending")
+def get_pending_paper_ids(session: Session = Depends(get_session)):
+    """Get IDs of all pending/failed papers that need processing."""
+    papers = session.exec(
+        select(Paper.id).where(
+            Paper.is_processed == False,
+            or_(
+                Paper.processing_status == "pending",
+                Paper.processing_status == "failed",
+            ),
+        )
+    ).all()
+    return {"paper_ids": papers}
+
+
 @app.get("/papers/{paper_id}", response_model=PaperRead)
 def get_paper(paper_id: int, session: Session = Depends(get_session)):
     """Get a specific paper by ID."""

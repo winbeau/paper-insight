@@ -38,6 +38,11 @@ export async function deletePaper(id: number): Promise<{ message: string }> {
   return data
 }
 
+export async function fetchPendingPaperIds(): Promise<number[]> {
+  const { data } = await api.get<{ paper_ids: number[] }>('/papers/pending')
+  return data.paper_ids
+}
+
 export async function fetchStats(): Promise<Stats> {
   const { data } = await api.get<Stats>('/stats')
   return data

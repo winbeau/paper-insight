@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, toRef, onMounted, onUnmounted } from 'vue'
+import { ref, computed, toRef, watch, onMounted, onUnmounted } from 'vue'
 import type { Paper } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
@@ -13,11 +13,13 @@ import { deletePaper } from '../../services/api'
 
 const props = defineProps<{
   paper: Paper
+  autoProcess?: boolean  // When true, automatically start processing
 }>()
 
 const emit = defineEmits<{
   refresh: []
   delete: [id: number]
+  'processing-done': [id: number, success: boolean]  // Emitted when auto-processing completes
 }>()
 
 // Card expansion state
@@ -61,6 +63,26 @@ const {
   toRef(() => props.paper.is_processed),
   () => emit('refresh')
 )
+
+// Auto-process when autoProcess prop becomes true
+watch(
+  () => props.autoProcess,
+  (shouldProcess) => {
+    if (shouldProcess && !props.paper.is_processed && !isStreaming.value && !isRetrying.value) {
+      handleRetry()
+    }
+  },
+  { immediate: true }
+)
+
+// Emit processing-done when streaming completes (for batch processing coordination)
+watch(isStreaming, (streaming, wasStreaming) => {
+  if (wasStreaming && !streaming && props.autoProcess) {
+    // Stream just finished, emit completion status
+    const success = !streamError.value && !isFailed.value
+    emit('processing-done', props.paper.id, success)
+  }
+})
 
 // Computed helpers
 const formattedDate = computed(() => {

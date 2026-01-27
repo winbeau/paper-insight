@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
-import { fetchPapers, fetchStats, triggerFetch, processBatchStream, fetchSettings } from './services/api'
+import { fetchPapers, fetchStats, triggerFetch, fetchPendingPaperIds, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)
-const settings = ref<AppSettings | null>(null) // New settings ref
+const settings = ref<AppSettings | null>(null)
 const loading = ref(false)
 const fetching = ref(false)
 const batchProcessing = ref(false)
 const error = ref<string | null>(null)
+
+// Batch processing queue state
+const MAX_CONCURRENT = 3
+const processingQueue = ref<number[]>([])  // Queue of paper IDs waiting to process
+const processingPaperIds = ref<Set<number>>(new Set())  // Currently processing paper IDs
 
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
@@ -88,34 +93,60 @@ async function handleFetch() {
 }
 
 async function handleBatchProcess() {
-  batchProcessing.value = true
+  if (batchProcessing.value) return
 
-  processBatchStream({
-    onStarted: () => {
-      // Batch started - refresh to pick up initial "processing" status
-      loadData()
-    },
-    onPaperProcessing: () => {
-      // Refresh when a paper starts processing to update UI
-      loadData()
-    },
-    onPaperCompleted: () => {
-      // Reload data when a paper is completed
-      loadData()
-    },
-    onPaperFailed: () => {
-      // Reload data to show updated status
-      loadData()
-    },
-    onDone: () => {
+  batchProcessing.value = true
+  error.value = null
+
+  try {
+    // Fetch all pending paper IDs
+    const pendingIds = await fetchPendingPaperIds()
+
+    if (pendingIds.length === 0) {
       batchProcessing.value = false
-      loadData()
-    },
-    onError: (err) => {
-      error.value = err.message || 'Failed to process papers'
-      batchProcessing.value = false
-    },
-  })
+      return
+    }
+
+    // Initialize queue with all pending papers
+    processingQueue.value = [...pendingIds]
+    processingPaperIds.value = new Set()
+
+    // Start processing up to MAX_CONCURRENT papers
+    startNextBatch()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to start batch processing'
+    batchProcessing.value = false
+  }
+}
+
+function startNextBatch() {
+  // Fill up to MAX_CONCURRENT processing slots
+  while (
+    processingPaperIds.value.size < MAX_CONCURRENT &&
+    processingQueue.value.length > 0
+  ) {
+    const nextId = processingQueue.value.shift()!
+    processingPaperIds.value = new Set([...processingPaperIds.value, nextId])
+  }
+
+  // If nothing is processing, batch is complete
+  if (processingPaperIds.value.size === 0) {
+    batchProcessing.value = false
+    loadData()
+  }
+}
+
+function handleProcessingDone(paperId: number, _success: boolean) {
+  // Remove from processing set
+  const newSet = new Set(processingPaperIds.value)
+  newSet.delete(paperId)
+  processingPaperIds.value = newSet
+
+  // Refresh data to update UI
+  loadData()
+
+  // Start next paper in queue
+  startNextBatch()
 }
 
 onMounted(() => {
@@ -254,10 +285,12 @@ function handlePaperDeleted(paperId: number) {
             v-for="paper in filteredPapers"
             :key="paper.id"
             :paper="paper"
+            :auto-process="processingPaperIds.has(paper.id)"
             class="animate-slide-up"
             :style="{ animationDelay: `${filteredPapers.indexOf(paper) * 50}ms` }"
             @refresh="loadData"
             @delete="handlePaperDeleted"
+            @processing-done="handleProcessingDone"
           />
         </div>
       </div>
