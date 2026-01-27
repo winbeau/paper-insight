@@ -705,10 +705,12 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             # Update paper with results
             print(f"[Dify Debug] Updating paper in database...")
             from datetime import datetime
-            paper.summary_zh = analysis.summary_zh
+            paper.paper_essence = analysis.paper_essence
+            paper.concept_bridging = analysis.concept_bridging_str
+            paper.visual_verification = analysis.visual_verification
             paper.relevance_score = analysis.relevance_score
             paper.relevance_reason = analysis.relevance_reason
-            paper.heuristic_idea = analysis.heuristic_idea
+            paper.heuristic_suggestion = analysis.heuristic_suggestion
             paper.is_processed = True
             paper.processed_at = datetime.utcnow()
 
@@ -724,15 +726,16 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             # Send final result
             print(f"[Dify Debug] Sending result event...")
             result_data = {
-                "summary_zh": result.summary_zh,
+                "paper_essence": result.paper_essence,
+                "concept_bridging": {
+                    "source_concept": result.concept_bridging.source_concept,
+                    "target_concept": result.concept_bridging.target_concept,
+                    "mechanism_transfer": result.concept_bridging.mechanism_transfer,
+                },
+                "visual_verification": result.visual_verification,
                 "relevance_score": result.relevance_score,
                 "relevance_reason": result.relevance_reason,
-                "technical_mapping": {
-                    "token_vs_patch": result.technical_mapping.token_vs_patch,
-                    "temporal_logic": result.technical_mapping.temporal_logic,
-                    "frequency_domain": result.technical_mapping.frequency_domain,
-                },
-                "heuristic_idea": result.heuristic_idea,
+                "heuristic_suggestion": result.heuristic_suggestion,
                 "thought_process": result.thought_process,
             }
             yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"

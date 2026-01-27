@@ -18,11 +18,13 @@ class Paper(SQLModel, table=True):
     pdf_url: str
     thumbnail_url: Optional[str] = None
 
-    # AI-generated analysis fields
-    summary_zh: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # AI-generated analysis fields (new format based on LLM prompt)
+    paper_essence: Optional[str] = Field(default=None, sa_column=Column(Text))  # 核心创新点
+    concept_bridging: Optional[str] = Field(default=None, sa_column=Column(Text))  # JSON string
+    visual_verification: Optional[str] = Field(default=None, sa_column=Column(Text))  # 视觉验证
     relevance_score: Optional[float] = Field(default=None, ge=0, le=10)
     relevance_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
-    heuristic_idea: Optional[str] = Field(default=None, sa_column=Column(Text))
+    heuristic_suggestion: Optional[str] = Field(default=None, sa_column=Column(Text))  # 核心建议
 
     # Metadata
     is_processed: bool = Field(default=False)
@@ -55,10 +57,12 @@ class PaperRead(SQLModel):
     updated: datetime
     pdf_url: str
     thumbnail_url: Optional[str] = None
-    summary_zh: Optional[str]
-    relevance_score: Optional[float]
-    relevance_reason: Optional[str]
-    heuristic_idea: Optional[str]
+    paper_essence: Optional[str] = None
+    concept_bridging: Optional[str] = None
+    visual_verification: Optional[str] = None
+    relevance_score: Optional[float] = None
+    relevance_reason: Optional[str] = None
+    heuristic_suggestion: Optional[str] = None
     is_processed: bool
     processing_status: str
     created_at: datetime
@@ -67,10 +71,12 @@ class PaperRead(SQLModel):
 
 class LLMAnalysis(BaseModel):
     """Schema for LLM analysis response."""
-    summary_zh: str
-    relevance_score: float
-    relevance_reason: str
-    heuristic_idea: str
+    paper_essence: str = ""
+    concept_bridging_str: str = ""  # Formatted string from concept_bridging object
+    visual_verification: str = ""
+    relevance_score: float = 0
+    relevance_reason: str = ""
+    heuristic_suggestion: str = ""
 
 
 class AppSettings(SQLModel, table=True):

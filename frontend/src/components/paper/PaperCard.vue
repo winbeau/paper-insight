@@ -214,19 +214,39 @@ function toggleExpand() {
         </button>
       </div>
 
-      <!-- Heuristic Idea (Focal Point) -->
-      <HeuristicBox :content="paper.heuristic_idea" class="mb-4" />
+      <!-- Heuristic Suggestion (Focal Point) -->
+      <HeuristicBox :content="paper.heuristic_suggestion" class="mb-4" />
 
       <!-- Expanded Content -->
       <Transition name="card-expand">
         <div v-if="isExpanded" class="space-y-4 mb-4 animate-fade-in">
-          <!-- Chinese Summary -->
-          <div v-if="paper.summary_zh">
+          <!-- Paper Essence (论文精华) -->
+          <div v-if="paper.paper_essence">
             <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
-              Summary (中文)
+              论文精华
             </h3>
-            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed">
-              {{ paper.summary_zh }}
+            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
+              {{ paper.paper_essence }}
+            </p>
+          </div>
+
+          <!-- Concept Bridging (概念桥接) -->
+          <div v-if="paper.concept_bridging">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
+              概念桥接
+            </h3>
+            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
+              {{ paper.concept_bridging }}
+            </p>
+          </div>
+
+          <!-- Visual Verification (视觉验证) -->
+          <div v-if="paper.visual_verification">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
+              视觉验证
+            </h3>
+            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
+              {{ paper.visual_verification }}
             </p>
           </div>
 
@@ -258,9 +278,9 @@ function toggleExpand() {
           <!-- Relevance Reason -->
           <div v-if="paper.relevance_reason">
             <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] mb-2">
-              Relevance Analysis
+              相关性分析
             </h3>
-            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed">
+            <p class="text-[var(--color-ink-700)] text-sm leading-relaxed whitespace-pre-line">
               {{ paper.relevance_reason }}
             </p>
           </div>

@@ -9,10 +9,12 @@ export interface Paper {
   updated: string
   pdf_url: string
   thumbnail_url: string | null
-  summary_zh: string | null
+  paper_essence: string | null
+  concept_bridging: string | null
+  visual_verification: string | null
   relevance_score: number | null
   relevance_reason: string | null
-  heuristic_idea: string | null
+  heuristic_suggestion: string | null
   is_processed: boolean
   processing_status: string
   created_at: string
@@ -38,18 +40,19 @@ export type FilterType = 'all' | 'high' | 'low'
 export type StatusFilter = 'all' | 'processed' | 'pending'
 
 // Dify Streaming Types
-export interface TechnicalMapping {
-  token_vs_patch: string
-  temporal_logic: string
-  frequency_domain: string
+export interface ConceptBridging {
+  source_concept: string
+  target_concept: string
+  mechanism_transfer: string
 }
 
 export interface DifyAnalysisResult {
-  summary_zh: string
+  paper_essence: string
+  concept_bridging: ConceptBridging
+  visual_verification: string
   relevance_score: number
   relevance_reason: string
-  technical_mapping: TechnicalMapping
-  heuristic_idea: string
+  heuristic_suggestion: string
   thought_process: string | null
 }
 

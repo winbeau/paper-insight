@@ -93,6 +93,31 @@ def ensure_paper_schema():
         )
         added.add("processing_status")
 
+    # New LLM output format fields
+    if "paper_essence" not in columns:
+        ddl_statements.append(
+            f"ALTER TABLE {table_name} ADD COLUMN paper_essence TEXT"
+        )
+        added.add("paper_essence")
+
+    if "concept_bridging" not in columns:
+        ddl_statements.append(
+            f"ALTER TABLE {table_name} ADD COLUMN concept_bridging TEXT"
+        )
+        added.add("concept_bridging")
+
+    if "visual_verification" not in columns:
+        ddl_statements.append(
+            f"ALTER TABLE {table_name} ADD COLUMN visual_verification TEXT"
+        )
+        added.add("visual_verification")
+
+    if "heuristic_suggestion" not in columns:
+        ddl_statements.append(
+            f"ALTER TABLE {table_name} ADD COLUMN heuristic_suggestion TEXT"
+        )
+        added.add("heuristic_suggestion")
+
     final_columns = columns | added
     with engine.begin() as conn:
         for stmt in ddl_statements:

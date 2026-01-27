@@ -55,22 +55,27 @@ class DifyStreamEvent:
 
 
 @dataclass
-class TechnicalMapping:
-    """Technical mapping analysis from Dify workflow."""
-    token_vs_patch: str = ""
-    temporal_logic: str = ""
-    frequency_domain: str = ""
+class ConceptBridging:
+    """Concept bridging analysis from Dify workflow."""
+    source_concept: str = ""  # 目标论文中的关键技术概念
+    target_concept: str = ""  # 用户 Idea 中的对应概念
+    mechanism_transfer: str = ""  # 迁移机制说明
 
 
 @dataclass
 class DifyAnalysisResult:
     """Complete analysis result from Dify workflow."""
-    summary_zh: str
-    relevance_score: float
-    relevance_reason: str
-    technical_mapping: TechnicalMapping
-    heuristic_idea: str
+    paper_essence: str = ""  # 一句话概括核心创新点
+    concept_bridging: ConceptBridging = None  # 概念桥接分析
+    visual_verification: str = ""  # 视觉证据验证
+    relevance_score: float = 0
+    relevance_reason: str = ""
+    heuristic_suggestion: str = ""  # 核心建议
     thought_process: Optional[str] = None
+
+    def __post_init__(self):
+        if self.concept_bridging is None:
+            self.concept_bridging = ConceptBridging()
 
 
 class DifyClientError(Exception):
@@ -376,7 +381,7 @@ class DifyClient:
     ) -> DifyAnalysisResult:
         """Parse Dify workflow outputs into DifyAnalysisResult."""
         # If outputs only contains 'answer' (text with embedded JSON), extract from it
-        if "answer" in outputs and "summary_zh" not in outputs:
+        if "answer" in outputs and "relevance_score" not in outputs:
             answer_text = outputs["answer"]
             # Extract thought from <think> tags
             if "<think>" in answer_text and "</think>" in answer_text:
@@ -392,14 +397,15 @@ class DifyClient:
             if result:
                 return result
 
-        technical_mapping = TechnicalMapping()
-        if "technical_mapping" in outputs:
-            tm = outputs["technical_mapping"]
-            if isinstance(tm, dict):
-                technical_mapping = TechnicalMapping(
-                    token_vs_patch=tm.get("token_vs_patch", ""),
-                    temporal_logic=tm.get("temporal_logic", ""),
-                    frequency_domain=tm.get("frequency_domain", ""),
+        # Parse concept_bridging
+        concept_bridging = ConceptBridging()
+        if "concept_bridging" in outputs:
+            cb = outputs["concept_bridging"]
+            if isinstance(cb, dict):
+                concept_bridging = ConceptBridging(
+                    source_concept=cb.get("source_concept", ""),
+                    target_concept=cb.get("target_concept", ""),
+                    mechanism_transfer=cb.get("mechanism_transfer", ""),
                 )
 
         # Handle relevance_score that might be string or number
@@ -410,11 +416,12 @@ class DifyClient:
             score = 0.0
 
         return DifyAnalysisResult(
-            summary_zh=outputs.get("summary_zh", ""),
+            paper_essence=outputs.get("paper_essence", ""),
+            concept_bridging=concept_bridging,
+            visual_verification=outputs.get("visual_verification", ""),
             relevance_score=score,
             relevance_reason=outputs.get("relevance_reason", ""),
-            technical_mapping=technical_mapping,
-            heuristic_idea=outputs.get("heuristic_idea", ""),
+            heuristic_suggestion=outputs.get("heuristic_suggestion", ""),
             thought_process=thought_process if thought_process else None,
         )
 
@@ -441,35 +448,37 @@ class DifyClient:
         except json.JSONDecodeError:
             # If not JSON, create a minimal result
             return DifyAnalysisResult(
-                summary_zh=answer[:200] if answer else "",
+                paper_essence=answer[:200] if answer else "",
+                concept_bridging=ConceptBridging(),
+                visual_verification="",
                 relevance_score=0,
                 relevance_reason="无法解析结构化输出",
-                technical_mapping=TechnicalMapping(),
-                heuristic_idea="",
+                heuristic_suggestion="",
                 thought_process=thought_process if thought_process else None,
             )
 
     def to_llm_analysis(self, result: DifyAnalysisResult) -> LLMAnalysis:
-        """Convert DifyAnalysisResult to legacy LLMAnalysis model."""
-        tech_mapping_str = ""
-        if result.technical_mapping:
+        """Convert DifyAnalysisResult to LLMAnalysis model."""
+        # Format concept_bridging as a readable string
+        concept_bridging_str = ""
+        if result.concept_bridging:
             parts = []
-            if result.technical_mapping.token_vs_patch:
-                parts.append(f"Token/Patch映射: {result.technical_mapping.token_vs_patch}")
-            if result.technical_mapping.temporal_logic:
-                parts.append(f"时序逻辑: {result.technical_mapping.temporal_logic}")
-            if result.technical_mapping.frequency_domain:
-                parts.append(f"频域分析: {result.technical_mapping.frequency_domain}")
+            if result.concept_bridging.source_concept:
+                parts.append(f"源概念: {result.concept_bridging.source_concept}")
+            if result.concept_bridging.target_concept:
+                parts.append(f"目标概念: {result.concept_bridging.target_concept}")
+            if result.concept_bridging.mechanism_transfer:
+                parts.append(f"迁移机制: {result.concept_bridging.mechanism_transfer}")
             if parts:
-                tech_mapping_str = "\n\n【技术映射】\n" + "\n".join(parts)
-
-        heuristic_with_mapping = result.heuristic_idea + tech_mapping_str
+                concept_bridging_str = "\n".join(parts)
 
         return LLMAnalysis(
-            summary_zh=result.summary_zh,
+            paper_essence=result.paper_essence,
+            concept_bridging_str=concept_bridging_str,
+            visual_verification=result.visual_verification,
             relevance_score=result.relevance_score,
             relevance_reason=result.relevance_reason,
-            heuristic_idea=heuristic_with_mapping,
+            heuristic_suggestion=result.heuristic_suggestion,
         )
 
 
