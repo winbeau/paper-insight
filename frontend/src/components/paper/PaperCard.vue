@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import type { Paper, DifyAnalysisResult, StreamErrorEvent, ProgressStep } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
@@ -82,8 +82,7 @@ const isFailed = computed(() => {
 })
 
 const statusLabel = computed(() => {
-  if (isStreaming.value) return 'Dify 分析中...'
-  if (statusValue.value === 'processing') return 'Processing...'
+  if (isStreaming.value || statusValue.value === 'processing') return 'Dify 分析中...'
   if (statusValue.value === 'failed') return streamError.value
     ? getStreamErrorMessage(streamError.value)
     : 'Analysis failed'
@@ -109,7 +108,37 @@ onUnmounted(() => {
 // Close context menu on click outside
 onMounted(() => {
   document.addEventListener('click', closeContextMenu)
+
+  // Initialize progress steps if paper is already in processing state (batch processing)
+  if (props.paper.processing_status === 'processing' && !props.paper.is_processed) {
+    initBatchProcessingProgress()
+  }
 })
+
+// Initialize progress steps for batch processing papers
+function initBatchProcessingProgress() {
+  if (streamProgress.value.length === 0 && !isStreaming.value) {
+    // Show generic processing state - first step active, rest pending
+    streamProgress.value = WORKFLOW_STEPS.map((label, index) => ({
+      label,
+      status: index === 0 ? 'active' : 'pending',
+    })) as ProgressStep[]
+  }
+}
+
+// Watch for paper status changes (e.g., batch processing started after page load)
+watch(
+  () => props.paper.processing_status,
+  (newStatus, oldStatus) => {
+    if (newStatus === 'processing' && oldStatus !== 'processing' && !props.paper.is_processed) {
+      initBatchProcessingProgress()
+    }
+    // Clear progress when processing completes or fails (and we weren't streaming)
+    if (newStatus !== 'processing' && oldStatus === 'processing' && !isStreaming.value) {
+      streamProgress.value = []
+    }
+  }
+)
 
 function closeContextMenu() {
   showContextMenu.value = false

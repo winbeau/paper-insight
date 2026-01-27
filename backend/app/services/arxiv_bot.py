@@ -220,6 +220,23 @@ async def run_daily_fetch_async():
     bot = ArxivBot()
     session = get_sync_session()
 
+    # Concurrency limit for paper processing
+    MAX_CONCURRENT = 3
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    async def process_with_semaphore(paper_id: int) -> bool:
+        """Process a paper with semaphore-controlled concurrency and its own session."""
+        async with semaphore:
+            # Create a new session for each concurrent task to avoid session conflicts
+            task_session = get_sync_session()
+            try:
+                paper = task_session.get(Paper, paper_id)
+                if not paper:
+                    return False
+                return await bot.process_paper(task_session, paper)
+            finally:
+                task_session.close()
+
     try:
         # Fetch new papers (Sync)
         # Using run_in_executor to avoid blocking the event loop if this takes time
@@ -236,8 +253,27 @@ async def run_daily_fetch_async():
                 saved_count += 1
         print(f"Saved {saved_count} new papers to database")
 
-        # Process unprocessed papers (Async)
-        # Exclude papers that are currently being processed or already processed
+        # Reset stuck "processing" papers (processing for too long)
+        # Since we don't have a "processing_started_at" field, reset all stuck papers
+        stuck_papers = session.exec(
+            select(Paper).where(
+                Paper.processing_status == "processing",
+                Paper.is_processed == False,
+            )
+        ).all()
+
+        reset_count = 0
+        for paper in stuck_papers:
+            paper.processing_status = "failed"
+            session.add(paper)
+            reset_count += 1
+
+        if reset_count > 0:
+            session.commit()
+            print(f"Reset {reset_count} stuck 'processing' papers to 'failed'")
+
+        # Process unprocessed papers (Async with concurrency limit)
+        # Include: new papers (None status) and failed papers (for retry)
         from sqlalchemy import or_
         unprocessed = session.exec(
             select(Paper).where(
@@ -248,14 +284,21 @@ async def run_daily_fetch_async():
                 ),
             )
         ).all()
-        print(f"Processing {len(unprocessed)} unprocessed papers...")
 
-        processed_count = 0
-        for paper in unprocessed:
-            # Await the async process
-            if await bot.process_paper(session, paper):
-                processed_count += 1
-                print(f"  Processed: {paper.title[:50]}...")
+        # Extract paper IDs for concurrent processing (avoid passing detached objects)
+        paper_ids = [p.id for p in unprocessed]
+        print(f"Processing {len(paper_ids)} unprocessed papers (max {MAX_CONCURRENT} concurrent)...")
+
+        # Process papers concurrently with semaphore limit
+        # Each task gets its own session to avoid conflicts
+        tasks = [process_with_semaphore(pid) for pid in paper_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed_count = sum(1 for r in results if r is True)
+        error_count = sum(1 for r in results if isinstance(r, Exception))
+
+        if error_count > 0:
+            print(f"  {error_count} papers encountered errors during processing")
 
         print(f"Processed {processed_count} papers with LLM analysis")
 
