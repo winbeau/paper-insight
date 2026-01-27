@@ -65,6 +65,11 @@ export interface BatchPaperCompletedEvent {
   total: number
 }
 
+export interface BatchPaperProcessingEvent {
+  paper_id: number
+  title: string
+}
+
 export interface BatchPaperFailedEvent {
   paper_id: number
   title?: string
@@ -83,6 +88,7 @@ export interface BatchDoneEvent {
 
 export interface BatchStreamCallbacks {
   onStarted?: (event: BatchStartedEvent) => void
+  onPaperProcessing?: (event: BatchPaperProcessingEvent) => void
   onPaperCompleted?: (event: BatchPaperCompletedEvent) => void
   onPaperFailed?: (event: BatchPaperFailedEvent) => void
   onDone?: (event: BatchDoneEvent) => void
@@ -155,6 +161,9 @@ export function processBatchStream(
             switch (eventType) {
               case 'started':
                 callbacks.onStarted?.(data as BatchStartedEvent)
+                break
+              case 'paper_processing':
+                callbacks.onPaperProcessing?.(data as BatchPaperProcessingEvent)
                 break
               case 'paper_completed':
                 callbacks.onPaperCompleted?.(data as BatchPaperCompletedEvent)

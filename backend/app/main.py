@@ -311,6 +311,9 @@ async def process_papers_batch_stream(session: Session = Depends(get_session)):
         processed_count = 0
         failed_count = 0
 
+        # Event queue for real-time streaming
+        event_queue: asyncio.Queue = asyncio.Queue()
+
         async def process_paper_with_events(paper_id: int):
             nonlocal processed_count, failed_count
             async with semaphore:
@@ -320,41 +323,48 @@ async def process_papers_batch_stream(session: Session = Depends(get_session)):
                     if not paper:
                         return None
 
+                    # Emit paper_processing event when starting
+                    await event_queue.put(
+                        f"event: paper_processing\ndata: {json.dumps({'paper_id': paper_id, 'title': paper.title})}\n\n"
+                    )
+
                     success = await bot.process_paper(task_session, paper)
-                    return (paper_id, paper.title, success)
+
+                    if success:
+                        processed_count += 1
+                        await event_queue.put(
+                            f"event: paper_completed\ndata: {json.dumps({'paper_id': paper_id, 'title': paper.title, 'processed': processed_count, 'total': total_count})}\n\n"
+                        )
+                    else:
+                        failed_count += 1
+                        await event_queue.put(
+                            f"event: paper_failed\ndata: {json.dumps({'paper_id': paper_id, 'title': paper.title, 'failed': failed_count, 'total': total_count})}\n\n"
+                        )
+                    return True
                 except Exception as e:
-                    return (paper_id, "", False, str(e))
+                    failed_count += 1
+                    await event_queue.put(
+                        f"event: paper_failed\ndata: {json.dumps({'paper_id': paper_id, 'error': str(e), 'failed': failed_count, 'total': total_count})}\n\n"
+                    )
+                    return False
                 finally:
                     task_session.close()
 
-        # Process papers concurrently but yield events as they complete
-        pending_tasks = {asyncio.create_task(process_paper_with_events(pid)): pid for pid in paper_ids}
+        # Start all tasks
+        tasks = [asyncio.create_task(process_paper_with_events(pid)) for pid in paper_ids]
 
-        while pending_tasks:
-            done, _ = await asyncio.wait(pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+        # Yield events as they come in while tasks are running
+        all_done = False
+        while not all_done or not event_queue.empty():
+            # Check if all tasks are done
+            all_done = all(t.done() for t in tasks)
 
-            for task in done:
-                paper_id = pending_tasks.pop(task)
-                try:
-                    result = task.result()
-                    if result is None:
-                        continue
-
-                    if len(result) == 3:
-                        pid, title, success = result
-                        if success:
-                            processed_count += 1
-                            yield f"event: paper_completed\ndata: {json.dumps({'paper_id': pid, 'title': title, 'processed': processed_count, 'total': total_count})}\n\n"
-                        else:
-                            failed_count += 1
-                            yield f"event: paper_failed\ndata: {json.dumps({'paper_id': pid, 'title': title, 'failed': failed_count, 'total': total_count})}\n\n"
-                    else:
-                        pid, title, success, error = result
-                        failed_count += 1
-                        yield f"event: paper_failed\ndata: {json.dumps({'paper_id': pid, 'error': error, 'failed': failed_count, 'total': total_count})}\n\n"
-                except Exception as e:
-                    failed_count += 1
-                    yield f"event: paper_failed\ndata: {json.dumps({'paper_id': paper_id, 'error': str(e), 'failed': failed_count, 'total': total_count})}\n\n"
+            # Yield queued events with timeout
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                yield event
+            except asyncio.TimeoutError:
+                continue
 
         yield f"event: done\ndata: {json.dumps({'status': 'completed', 'processed': processed_count, 'failed': failed_count, 'total': total_count})}\n\n"
 

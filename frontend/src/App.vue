@@ -51,7 +51,6 @@ const filteredPapers = computed(() => {
 })
 
 async function loadData() {
-  if (loading.value) return
   loading.value = true
   error.value = null
 
@@ -93,7 +92,12 @@ async function handleBatchProcess() {
 
   processBatchStream({
     onStarted: () => {
-      // Processing started
+      // Batch started - refresh to pick up initial "processing" status
+      loadData()
+    },
+    onPaperProcessing: () => {
+      // Refresh when a paper starts processing to update UI
+      loadData()
     },
     onPaperCompleted: () => {
       // Reload data when a paper is completed
