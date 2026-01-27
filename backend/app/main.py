@@ -9,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from pathlib import Path
 from sqlmodel import Session, select
 from sqlalchemy import or_
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session
 from app.models import Paper, PaperRead, AppSettings
@@ -20,7 +22,11 @@ from app.services.dify_client import (
     DifyTimeoutError,
     DifyRateLimitError,
 )
+from app.services.pdf_renderer import generate_thumbnail
 from app.constants import ARXIV_OPTIONS
+
+# Global scheduler instance
+scheduler = BackgroundScheduler()
 
 
 @asynccontextmanager
@@ -28,7 +34,24 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     ensure_appsettings_schema()
     ensure_paper_schema()
+
+    # Start APScheduler for daily paper fetching
+    # Schedule at 06:00 UTC daily
+    scheduler.add_job(
+        run_daily_fetch,
+        CronTrigger(hour=6, minute=0),
+        id="daily_paper_fetch",
+        name="Daily Paper Fetch",
+        replace_existing=True,
+    )
+    scheduler.start()
+    print("[Scheduler] Started - Daily paper fetch scheduled at 06:00 UTC")
+
     yield
+
+    # Shutdown scheduler gracefully
+    scheduler.shutdown(wait=False)
+    print("[Scheduler] Shutdown complete")
 
 
 app = FastAPI(
@@ -294,6 +317,12 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
             # Convert to LLMAnalysis for database storage
             analysis = dify_client.to_llm_analysis(result)
+
+            # Generate thumbnail if not already present
+            if not paper.thumbnail_url:
+                thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
+                if thumbnail_url:
+                    paper.thumbnail_url = thumbnail_url
 
             # Update paper with results
             from datetime import datetime

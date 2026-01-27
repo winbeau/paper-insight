@@ -237,8 +237,16 @@ async def run_daily_fetch_async():
         print(f"Saved {saved_count} new papers to database")
 
         # Process unprocessed papers (Async)
+        # Exclude papers that are currently being processed or already processed
+        from sqlalchemy import or_
         unprocessed = session.exec(
-            select(Paper).where(Paper.is_processed == False)
+            select(Paper).where(
+                Paper.is_processed == False,
+                or_(
+                    Paper.processing_status.is_(None),
+                    Paper.processing_status == "failed",
+                ),
+            )
         ).all()
         print(f"Processing {len(unprocessed)} unprocessed papers...")
 
