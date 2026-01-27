@@ -53,6 +53,139 @@ export async function triggerBatchProcess(): Promise<{ message: string; count: n
   return data
 }
 
+// Batch processing stream types
+export interface BatchStartedEvent {
+  total: number
+}
+
+export interface BatchPaperCompletedEvent {
+  paper_id: number
+  title: string
+  processed: number
+  total: number
+}
+
+export interface BatchPaperFailedEvent {
+  paper_id: number
+  title?: string
+  error?: string
+  failed: number
+  total: number
+}
+
+export interface BatchDoneEvent {
+  status: 'completed' | 'no_papers'
+  processed?: number
+  failed?: number
+  total?: number
+  message?: string
+}
+
+export interface BatchStreamCallbacks {
+  onStarted?: (event: BatchStartedEvent) => void
+  onPaperCompleted?: (event: BatchPaperCompletedEvent) => void
+  onPaperFailed?: (event: BatchPaperFailedEvent) => void
+  onDone?: (event: BatchDoneEvent) => void
+  onError?: (error: Error) => void
+}
+
+/**
+ * Process all pending/failed papers with streaming progress updates.
+ * Uses Server-Sent Events (SSE) to receive real-time updates.
+ */
+export function processBatchStream(
+  callbacks: BatchStreamCallbacks,
+): { abort: () => void } {
+  const url = `${baseURL}/papers/process/batch/stream`
+  const abortController = new AbortController()
+
+  const processStream = async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        signal: abortController.signal,
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        callbacks.onError?.(new Error(errorText || `HTTP Error: ${response.status}`))
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        callbacks.onError?.(new Error('Failed to get response reader'))
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || ''
+
+        for (const eventStr of events) {
+          if (!eventStr.trim()) continue
+
+          const lines = eventStr.trim().split('\n')
+          let eventType = ''
+          let dataStr = ''
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim()
+            } else if (line.startsWith('data:')) {
+              dataStr = line.slice(5).trim()
+            }
+          }
+
+          if (!dataStr) continue
+
+          try {
+            const data = JSON.parse(dataStr)
+            switch (eventType) {
+              case 'started':
+                callbacks.onStarted?.(data as BatchStartedEvent)
+                break
+              case 'paper_completed':
+                callbacks.onPaperCompleted?.(data as BatchPaperCompletedEvent)
+                break
+              case 'paper_failed':
+                callbacks.onPaperFailed?.(data as BatchPaperFailedEvent)
+                break
+              case 'done':
+                callbacks.onDone?.(data as BatchDoneEvent)
+                break
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        return
+      }
+      callbacks.onError?.(error as Error)
+    }
+  }
+
+  processStream()
+
+  return {
+    abort: () => abortController.abort(),
+  }
+}
+
 export async function processPaper(id: number): Promise<{ message: string }> {
   const { data } = await api.post<{ message: string }>(`/papers/${id}/process`)
   return data

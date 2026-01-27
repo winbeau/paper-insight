@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
-import { fetchPapers, fetchStats, triggerFetch, triggerBatchProcess, fetchSettings } from './services/api'
+import { fetchPapers, fetchStats, triggerFetch, processBatchStream, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 
@@ -90,26 +90,28 @@ async function handleFetch() {
 
 async function handleBatchProcess() {
   batchProcessing.value = true
-  try {
-    const result = await triggerBatchProcess()
-    if (result.count === 0) {
-      // No papers to process
-      return
-    }
-    // Reload data periodically to show progress
-    const pollInterval = setInterval(() => {
+
+  processBatchStream({
+    onStarted: () => {
+      // Processing started
+    },
+    onPaperCompleted: () => {
+      // Reload data when a paper is completed
       loadData()
-    }, 5000)
-    // Stop polling after 5 minutes
-    setTimeout(() => {
-      clearInterval(pollInterval)
+    },
+    onPaperFailed: () => {
+      // Reload data to show updated status
+      loadData()
+    },
+    onDone: () => {
       batchProcessing.value = false
       loadData()
-    }, 5 * 60 * 1000)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to start batch processing'
-    batchProcessing.value = false
-  }
+    },
+    onError: (err) => {
+      error.value = err.message || 'Failed to process papers'
+      batchProcessing.value = false
+    },
+  })
 }
 
 onMounted(() => {

@@ -12,7 +12,7 @@ from sqlalchemy import or_
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session
+from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema, get_session, get_sync_session
 from app.models import Paper, PaperRead, AppSettings
 from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
 from app.services.dify_client import (
@@ -253,6 +253,107 @@ def process_papers_batch(
 
     background_tasks.add_task(run_daily_fetch)
     return {"message": f"Batch processing started for {pending_count} papers", "count": pending_count}
+
+
+@app.get("/papers/process/batch/stream")
+async def process_papers_batch_stream(session: Session = Depends(get_session)):
+    """
+    Process all pending/failed papers with streaming progress updates.
+
+    Returns Server-Sent Events (SSE) with the following event types:
+    - started: Batch processing started with total count
+    - paper_processing: A paper started processing
+    - paper_completed: A paper finished processing successfully
+    - paper_failed: A paper failed to process
+    - done: All papers processed
+    """
+    import asyncio
+    from sqlalchemy import or_
+
+    # Get papers to process
+    papers_to_process = session.exec(
+        select(Paper).where(
+            Paper.is_processed == False,
+            or_(
+                Paper.processing_status == "pending",
+                Paper.processing_status == "failed",
+            ),
+        )
+    ).all()
+
+    paper_ids = [p.id for p in papers_to_process]
+    total_count = len(paper_ids)
+
+    async def generate_events():
+        if total_count == 0:
+            yield f"event: done\ndata: {json.dumps({'status': 'no_papers', 'message': 'No papers to process'})}\n\n"
+            return
+
+        yield f"event: started\ndata: {json.dumps({'total': total_count})}\n\n"
+
+        bot = get_arxiv_bot()
+        MAX_CONCURRENT = 3
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+        processed_count = 0
+        failed_count = 0
+
+        async def process_paper_with_events(paper_id: int):
+            nonlocal processed_count, failed_count
+            async with semaphore:
+                task_session = get_sync_session()
+                try:
+                    paper = task_session.get(Paper, paper_id)
+                    if not paper:
+                        return None
+
+                    success = await bot.process_paper(task_session, paper)
+                    return (paper_id, paper.title, success)
+                except Exception as e:
+                    return (paper_id, "", False, str(e))
+                finally:
+                    task_session.close()
+
+        # Process papers concurrently but yield events as they complete
+        pending_tasks = {asyncio.create_task(process_paper_with_events(pid)): pid for pid in paper_ids}
+
+        while pending_tasks:
+            done, _ = await asyncio.wait(pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+
+            for task in done:
+                paper_id = pending_tasks.pop(task)
+                try:
+                    result = task.result()
+                    if result is None:
+                        continue
+
+                    if len(result) == 3:
+                        pid, title, success = result
+                        if success:
+                            processed_count += 1
+                            yield f"event: paper_completed\ndata: {json.dumps({'paper_id': pid, 'title': title, 'processed': processed_count, 'total': total_count})}\n\n"
+                        else:
+                            failed_count += 1
+                            yield f"event: paper_failed\ndata: {json.dumps({'paper_id': pid, 'title': title, 'failed': failed_count, 'total': total_count})}\n\n"
+                    else:
+                        pid, title, success, error = result
+                        failed_count += 1
+                        yield f"event: paper_failed\ndata: {json.dumps({'paper_id': pid, 'error': error, 'failed': failed_count, 'total': total_count})}\n\n"
+                except Exception as e:
+                    failed_count += 1
+                    yield f"event: paper_failed\ndata: {json.dumps({'paper_id': paper_id, 'error': str(e), 'failed': failed_count, 'total': total_count})}\n\n"
+
+        yield f"event: done\ndata: {json.dumps({'status': 'completed', 'processed': processed_count, 'failed': failed_count, 'total': total_count})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/papers/{paper_id}/process")

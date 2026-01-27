@@ -20,7 +20,10 @@
   "dependencies": {
     "@vueuse/core": "^14.1.0",
     "axios": "^1.13.2",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.28",
     "markdown-it": "^14.1.0",
+    "markdown-it-katex": "^2.0.3",
     "vue": "^3.5.26",
     "vue-router": "^4.6.4"
   }
