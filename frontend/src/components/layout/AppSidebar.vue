@@ -18,6 +18,7 @@ const emit = defineEmits<{
   'update:statusFilter': [value: StatusFilter]
   fetch: []
   'batch-process': []
+  'import': []
   'settings-saved': [] // New emit for when settings are saved
 }>()
 
@@ -100,6 +101,7 @@ function handleSettingsClose() {
         >
           <svg
             class="w-4 h-4"
+            :class="{ 'animate-spin': batchProcessing }"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -114,6 +116,23 @@ function handleSettingsClose() {
             </template>
           </svg>
           {{ batchProcessing ? 'Processing...' : `Start Processing${stats?.pending_processing ? ` (${stats.pending_processing})` : ''}` }}
+        </button>
+
+        <!-- Import Button -->
+        <button
+          @click="emit('import')"
+          :disabled="loading || batchProcessing"
+          class="w-full px-4 py-2.5 bg-[var(--color-paper-50)] text-[var(--color-ink-700)] text-sm font-medium rounded-lg border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-100)] hover:border-[var(--color-ink-300)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+        >
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          Import from arXiv
         </button>
       </div>
       <div v-if="loading || batchProcessing" class="-mt-4 mb-6">

@@ -244,6 +244,97 @@ def delete_paper(paper_id: int, session: Session = Depends(get_session)):
     return {"message": "Paper deleted successfully", "paper_id": paper_id}
 
 
+@app.post("/papers/import")
+def import_paper_from_arxiv(
+    arxiv_url: str = Query(..., description="arXiv URL or ID (e.g., https://arxiv.org/abs/2301.12345 or 2301.12345)"),
+    session: Session = Depends(get_session),
+):
+    """
+    Import a paper from arXiv by URL or ID.
+
+    Accepts various arXiv URL formats:
+    - https://arxiv.org/abs/2301.12345
+    - https://arxiv.org/pdf/2301.12345.pdf
+    - http://arxiv.org/abs/2301.12345v1
+    - 2301.12345
+    - 2301.12345v1
+
+    Returns the paper ID if successfully imported, or existing paper ID if already in database.
+    """
+    import re
+
+    # Parse arXiv ID from various URL formats
+    arxiv_id = None
+
+    # Pattern for arXiv ID (e.g., 2301.12345 or 2301.12345v1)
+    arxiv_id_pattern = r'(\d{4}\.\d{4,5}(?:v\d+)?)'
+
+    # Try to extract from URL
+    if 'arxiv.org' in arxiv_url:
+        match = re.search(arxiv_id_pattern, arxiv_url)
+        if match:
+            arxiv_id = match.group(1)
+    else:
+        # Assume it's a direct arXiv ID
+        match = re.match(arxiv_id_pattern, arxiv_url.strip())
+        if match:
+            arxiv_id = match.group(1)
+
+    if not arxiv_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid arXiv URL or ID. Please provide a valid arXiv link (e.g., https://arxiv.org/abs/2301.12345) or ID (e.g., 2301.12345)"
+        )
+
+    # Check if paper already exists
+    existing = session.exec(
+        select(Paper).where(Paper.arxiv_id.startswith(arxiv_id.split('v')[0]))
+    ).first()
+
+    if existing:
+        return {
+            "message": "Paper already exists in database",
+            "paper_id": existing.id,
+            "arxiv_id": existing.arxiv_id,
+            "title": existing.title,
+            "is_new": False,
+        }
+
+    # Fetch paper from arXiv
+    bot = get_arxiv_bot()
+    paper_data = bot.fetch_paper_by_id(arxiv_id)
+
+    if not paper_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Paper not found on arXiv: {arxiv_id}"
+        )
+
+    # Save to database
+    paper = bot.save_paper(session, paper_data)
+
+    if not paper:
+        # This shouldn't happen since we checked for existing, but handle it anyway
+        existing = session.exec(
+            select(Paper).where(Paper.arxiv_id == paper_data.arxiv_id)
+        ).first()
+        return {
+            "message": "Paper already exists in database",
+            "paper_id": existing.id if existing else None,
+            "arxiv_id": paper_data.arxiv_id,
+            "title": paper_data.title,
+            "is_new": False,
+        }
+
+    return {
+        "message": "Paper imported successfully",
+        "paper_id": paper.id,
+        "arxiv_id": paper.arxiv_id,
+        "title": paper.title,
+        "is_new": True,
+    }
+
+
 @app.get("/papers/arxiv/{arxiv_id}", response_model=PaperRead)
 def get_paper_by_arxiv_id(arxiv_id: str, session: Session = Depends(get_session)):
     """Get a specific paper by arXiv ID."""

@@ -38,6 +38,21 @@ export async function deletePaper(id: number): Promise<{ message: string }> {
   return data
 }
 
+export interface ImportPaperResult {
+  message: string
+  paper_id: number
+  arxiv_id: string
+  title: string
+  is_new: boolean
+}
+
+export async function importPaper(arxivUrl: string): Promise<ImportPaperResult> {
+  const { data } = await api.post<ImportPaperResult>('/papers/import', null, {
+    params: { arxiv_url: arxivUrl },
+  })
+  return data
+}
+
 export async function fetchPendingPaperIds(): Promise<number[]> {
   const { data } = await api.get<{ paper_ids: number[] }>('/papers/pending')
   return data.paper_ids

@@ -4,6 +4,7 @@ import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './type
 import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
+import ArxivImportModal from './components/ArxivImportModal.vue'
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)
@@ -12,6 +13,7 @@ const loading = ref(false)
 const fetching = ref(false)
 const batchProcessing = ref(false)
 const error = ref<string | null>(null)
+const showImportModal = ref(false)
 
 // Batch processing queue state
 const MAX_CONCURRENT = 3
@@ -186,6 +188,20 @@ function handlePaperDeleted(paperId: number) {
     stats.value.total_papers = Math.max(0, stats.value.total_papers - 1)
   }
 }
+
+async function handlePaperImported(paperId: number, isNew: boolean) {
+  // Reload data to show the new paper
+  await loadData()
+
+  // If it's a new paper, trigger batch processing to analyze it
+  if (isNew) {
+    // Add the paper to the processing queue
+    processingQueue.value = [paperId]
+    processingPaperIds.value = new Set()
+    batchProcessing.value = true
+    startNextBatch()
+  }
+}
 </script>
 
 <template>
@@ -202,6 +218,7 @@ function handlePaperDeleted(paperId: number) {
       @update:status-filter="statusFilter = $event"
       @fetch="handleFetch"
       @batch-process="handleBatchProcess"
+      @import="showImportModal = true"
       @settings-saved="handleSettingsSaved"
     />
 
@@ -316,5 +333,12 @@ function handlePaperDeleted(paperId: number) {
         </div>
       </div>
     </main>
+
+    <!-- Import Modal -->
+    <ArxivImportModal
+      :show="showImportModal"
+      @close="showImportModal = false"
+      @imported="handlePaperImported"
+    />
   </div>
 </template>

@@ -120,6 +120,40 @@ class ArxivBot:
 
         return papers
 
+    def fetch_paper_by_id(self, arxiv_id: str) -> Optional[PaperCreate]:
+        """Fetch a single paper from arXiv by its ID.
+
+        Args:
+            arxiv_id: The arXiv ID (e.g., '2301.12345' or '2301.12345v1')
+
+        Returns:
+            PaperCreate object if found, None otherwise
+        """
+        # Clean up the arxiv_id - remove version suffix if present for search
+        clean_id = arxiv_id.split('v')[0] if 'v' in arxiv_id else arxiv_id
+
+        search = arxiv.Search(id_list=[clean_id])
+
+        try:
+            results = list(self.client.results(search))
+            if not results:
+                return None
+
+            result = results[0]
+            return PaperCreate(
+                arxiv_id=result.entry_id.split("/")[-1],
+                title=result.title.replace("\n", " ").strip(),
+                authors=", ".join([author.name for author in result.authors]),
+                abstract=result.summary.replace("\n", " ").strip(),
+                categories=", ".join(result.categories),
+                published=result.published.astimezone(timezone.utc).replace(tzinfo=None),
+                updated=result.updated.astimezone(timezone.utc).replace(tzinfo=None),
+                pdf_url=result.pdf_url,
+            )
+        except Exception as e:
+            print(f"Error fetching paper {arxiv_id}: {e}")
+            return None
+
     def save_paper(self, session: Session, paper_data: PaperCreate) -> Optional[Paper]:
         """Save a paper to database if not exists."""
         existing = session.exec(
