@@ -71,6 +71,11 @@ export interface StreamErrorEvent {
   message: string
 }
 
+export interface ProgressStep {
+  label: string
+  status: 'pending' | 'active' | 'done' | 'error'
+}
+
 export interface StreamDoneEvent {
   status: string
 }

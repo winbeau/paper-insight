@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import type { Paper, DifyAnalysisResult, StreamErrorEvent } from '../../types/paper'
+import type { Paper, DifyAnalysisResult, StreamErrorEvent, ProgressStep } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import HeuristicBox from '../ui/HeuristicBox.vue'
 import ThinkingPanel from '../ui/ThinkingPanel.vue'
@@ -30,7 +30,7 @@ let reappearTimer: number | null = null
 
 // Streaming state
 const isStreaming = ref(false)
-const streamProgress = ref('')
+const streamProgress = ref<ProgressStep[]>([])
 const streamThought = ref('')
 const streamError = ref<StreamErrorEvent | null>(null)
 const streamResult = ref<DifyAnalysisResult | null>(null)
@@ -75,7 +75,7 @@ const isFailed = computed(() => {
 })
 
 const statusLabel = computed(() => {
-  if (isStreaming.value) return 'Dify R1 reasoning...'
+  if (isStreaming.value) return 'Dify 分析中...'
   if (statusValue.value === 'processing') return 'Processing...'
   if (statusValue.value === 'failed') return streamError.value
     ? getStreamErrorMessage(streamError.value)
@@ -98,29 +98,62 @@ onUnmounted(() => {
   }
 })
 
+// Map progress event to step update
+function handleProgressEvent(event: { status: string; message: string }) {
+  const steps = streamProgress.value
+
+  if (event.status === 'started') {
+    // PDF download started
+    streamProgress.value = [
+      { label: '下载 PDF', status: 'active' },
+    ]
+  } else if (event.status === 'workflow_started') {
+    // Mark download done, workflow started
+    if (steps.length > 0) steps[steps.length - 1].status = 'done'
+    steps.push({ label: '上传文件', status: 'done' })
+  } else if (event.status === 'node_started') {
+    // Mark previous active step as done
+    const prevActive = steps.findIndex(s => s.status === 'active')
+    if (prevActive >= 0) steps[prevActive].status = 'done'
+
+    // Extract node name
+    const match = event.message.match(/执行节点:\s*(.+)/)
+    const nodeName = match ? match[1] : event.message
+    steps.push({ label: nodeName, status: 'active' })
+  }
+
+  streamProgress.value = [...steps]
+}
+
 async function handleRetry() {
   if (isRetrying.value || isProcessing.value || isStreaming.value) return
 
   isRetrying.value = true
   isStreaming.value = true
   localStatus.value = 'processing'
-  streamProgress.value = ''
+  streamProgress.value = []
   streamThought.value = ''
   streamError.value = null
   streamResult.value = null
 
   const { abort } = processPaperStream(props.paper.id, {
     onProgress: (event) => {
-      streamProgress.value = event.message
+      handleProgressEvent(event)
     },
     onThinking: (_chunk, accumulated) => {
       streamThought.value = accumulated
     },
     onResult: (result) => {
       streamResult.value = result
+      // Mark all steps done
+      streamProgress.value = streamProgress.value.map(s => ({ ...s, status: 'done' as const }))
     },
     onError: (error) => {
       streamError.value = error
+      // Mark active step as error
+      streamProgress.value = streamProgress.value.map(s =>
+        s.status === 'active' ? { ...s, status: 'error' as const } : s
+      )
       localStatus.value = 'failed'
       isStreaming.value = false
       isRetrying.value = false
@@ -143,8 +176,8 @@ function toggleExpand() {
 function calculatePreviewPosition(event: MouseEvent) {
   if (!props.paper.thumbnail_url) return
 
-  const thumbWidth = 400 // Matches w-[400px]
-  const thumbHeight = 500 // Estimate
+  const thumbWidth = 400
+  const thumbHeight = 500
   const padding = 16
   const offset = 20
   const viewportWidth = window.innerWidth
@@ -325,21 +358,20 @@ function handleMouseMove(event: MouseEvent) {
                   leave-from-class="opacity-100 scale-100 translate-y-0"
                   leave-to-class="opacity-0 scale-95 translate-y-2"
                 >
-                  <div 
+                  <div
                     v-if="isHoveringAbstract && paper.thumbnail_url"
                     class="fixed z-[9999] pointer-events-none shadow-2xl rounded-lg border-2 border-white bg-white w-[400px] ring-1 ring-black/5 flex flex-col"
                     :style="thumbnailStyle"
                   >
                     <div class="w-full relative bg-gray-50 rounded-t-lg overflow-hidden">
-                      <img 
-                        :src="paper.thumbnail_url" 
+                      <img
+                        :src="paper.thumbnail_url"
                         class="w-full h-auto object-contain block"
                         alt="Paper Preview"
                       />
-                      <!-- Gradient overlay for depth -->
                       <div class="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent pointer-events-none mix-blend-multiply"></div>
                     </div>
-                    
+
                     <div class="bg-white px-3 py-2 flex items-center justify-between border-t border-gray-100 rounded-b-lg">
                       <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">First Page Preview</span>
                       <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
@@ -366,7 +398,7 @@ function handleMouseMove(event: MouseEvent) {
       <div class="flex items-center justify-between pt-3 border-t border-[var(--color-paper-200)]">
         <div class="flex items-center gap-2 text-sm text-[var(--color-ink-400)]">
           <span>{{ authorsList }}</span>
-          <span class="text-[var(--color-paper-300)]">•</span>
+          <span class="text-[var(--color-paper-300)]">&middot;</span>
           <div class="flex gap-1">
             <span
               v-for="cat in categoriesList"
@@ -376,7 +408,7 @@ function handleMouseMove(event: MouseEvent) {
               {{ cat }}
             </span>
           </div>
-          <span class="text-[var(--color-paper-300)]">•</span>
+          <span class="text-[var(--color-paper-300)]">&middot;</span>
           <span>{{ formattedDate }}</span>
         </div>
 
@@ -399,16 +431,17 @@ function handleMouseMove(event: MouseEvent) {
     <!-- Processing Status -->
     <div
       v-if="!paper.is_processed"
-      class="px-5 py-3 bg-[var(--color-paper-200)] rounded-b-xl border-t border-[var(--color-paper-300)]"
+      class="px-5 py-3 bg-[var(--color-paper-200)]/60 rounded-b-xl border-t border-[var(--color-paper-300)]/50"
     >
-      <!-- Thinking Panel for streaming -->
+      <!-- Dify Workflow Progress -->
       <ThinkingPanel
-        v-if="isStreaming || streamThought || streamError"
+        v-if="isStreaming || streamProgress.length > 0 || streamError"
+        :steps="streamProgress"
         :thought="streamThought"
-        :progress="streamProgress"
         :is-streaming="isStreaming"
         :error="streamError"
         class="mb-3"
+        @click.stop
       />
 
       <div class="flex items-center justify-between text-xs text-[var(--color-ink-400)]">
@@ -445,9 +478,6 @@ function handleMouseMove(event: MouseEvent) {
             analyze
           </button>
         </div>
-      </div>
-      <div v-if="isProcessing || isStreaming" class="relative mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-300)]">
-        <div class="absolute inset-y-0 left-0 w-1/3 bg-[var(--color-ink-700)]/60 animate-progress-bar"></div>
       </div>
     </div>
   </article>

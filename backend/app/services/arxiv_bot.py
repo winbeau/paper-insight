@@ -155,10 +155,10 @@ class ArxivBot:
             loop = asyncio.get_running_loop()
 
             if client_type == "dify":
-                # Use Dify client (async, non-streaming for batch processing)
+                # Use Dify client with PDF upload (async)
                 result = await client.analyze_paper(
-                    paper.title,
-                    paper.abstract,
+                    pdf_url=paper.pdf_url,
+                    title=paper.title,
                     user_id=f"batch-paper-{paper.id}",
                 )
                 if result:

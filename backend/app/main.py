@@ -228,7 +228,7 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             session.commit()
 
             # Send initial progress event
-            yield f"event: progress\ndata: {json.dumps({'status': 'started', 'message': '开始分析论文...'})}\n\n"
+            yield f"event: progress\ndata: {json.dumps({'status': 'started', 'message': '开始下载PDF...'})}\n\n"
 
             dify_client = get_dify_client()
             thought_parts = []
@@ -236,8 +236,8 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             final_outputs = None
 
             async for event in dify_client.analyze_paper_stream(
-                paper.title,
-                paper.abstract,
+                pdf_url=paper.pdf_url,
+                title=paper.title,
                 user_id=f"paper-{paper_id}",
             ):
                 # Handle thought (R1 thinking process)
