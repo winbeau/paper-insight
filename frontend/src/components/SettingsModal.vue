@@ -17,6 +17,7 @@ const arxivOptions = ref<ArxivOption[]>([])
 const settings = ref<AppSettings>({
   id: 1,
   research_focus: '',
+  research_idea: '',
   focus_keywords: [],
   system_prompt: '',
   arxiv_categories: [], // Default to empty, will be populated from API
@@ -157,6 +158,33 @@ function toggleCategory(code: string) {
                   Supports AND/OR logic
                 </div>
               </div>
+            </section>
+
+            <!-- Research Idea (Dify Analysis Context) -->
+            <section>
+              <h3 class="text-sm font-semibold text-[var(--color-ink-900)] mb-3 flex items-center gap-2">
+                <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                Research Idea (Dify 分析上下文)
+              </h3>
+              <div class="relative">
+                <textarea
+                  v-model="settings.research_idea"
+                  rows="6"
+                  class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all placeholder-gray-400"
+                  placeholder="**研究主题**：你正在研究什么？
+**技术背景与动机**：为什么要做这个研究？有什么痛点？
+**核心方法论**：你打算用什么方法解决？
+**预期科学贡献**：希望达成什么效果？"
+                ></textarea>
+                <div class="absolute bottom-2 right-2 text-[10px] text-gray-400 bg-white px-1">
+                  用于 Dify 论文分析
+                </div>
+              </div>
+              <p class="mt-2 text-xs text-gray-500">
+                描述你的研究方向和想法，Dify 会结合此上下文分析论文与你研究的关联性。
+              </p>
             </section>
 
             <!-- System Prompt (Advanced) -->

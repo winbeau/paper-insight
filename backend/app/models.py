@@ -82,7 +82,8 @@ class LLMAnalysis(BaseModel):
 class AppSettings(SQLModel, table=True):
     """Application settings stored in DB."""
     id: int = Field(default=1, primary_key=True)
-    research_focus: str = Field(sa_column=Column(Text, default=""))
+    research_focus: str = Field(sa_column=Column(Text, default=""))  # arXiv search query
+    research_idea: str = Field(sa_column=Column(Text, default=""))   # Dify idea_input (research context)
     focus_keywords: List[str] = Field(default=[], sa_column=Column(JSON))
     system_prompt: str = Field(sa_column=Column(Text, default=""))
     arxiv_categories: List[str] = Field(sa_column=Column(JSON, default=["cs.CV", "cs.LG"]))

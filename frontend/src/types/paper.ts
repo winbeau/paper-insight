@@ -30,7 +30,8 @@ export interface Stats {
 
 export interface AppSettings {
   id: number
-  research_focus: string
+  research_focus: string      // arXiv search query
+  research_idea: string       // Dify idea_input (research context)
   focus_keywords: string[]
   system_prompt: string
   arxiv_categories: string[]

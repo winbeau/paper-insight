@@ -32,6 +32,9 @@ def ensure_appsettings_schema():
     if "research_focus" not in columns:
         ddl_statements.append("ALTER TABLE appsettings ADD COLUMN research_focus TEXT")
         added.add("research_focus")
+    if "research_idea" not in columns:
+        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN research_idea TEXT")
+        added.add("research_idea")
     if "focus_keywords" not in columns:
         ddl_statements.append("ALTER TABLE appsettings ADD COLUMN focus_keywords JSON")
         added.add("focus_keywords")
@@ -53,6 +56,10 @@ def ensure_appsettings_schema():
         if "research_focus" in final_columns:
             conn.execute(
                 text("UPDATE appsettings SET research_focus = '' WHERE research_focus IS NULL")
+            )
+        if "research_idea" in final_columns:
+            conn.execute(
+                text("UPDATE appsettings SET research_idea = '' WHERE research_idea IS NULL")
             )
         if "system_prompt" in final_columns:
             conn.execute(

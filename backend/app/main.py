@@ -108,6 +108,7 @@ def update_settings(new_settings: AppSettings, session: Session = Depends(get_se
         session.add(settings)
     
     settings.research_focus = new_settings.research_focus
+    settings.research_idea = new_settings.research_idea
     settings.system_prompt = new_settings.system_prompt
     settings.arxiv_categories = new_settings.arxiv_categories
     
@@ -600,6 +601,10 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             session.add(paper)
             session.commit()
 
+            # Get research_idea from app settings for Dify idea_input
+            settings = session.get(AppSettings, 1)
+            idea_input = settings.research_idea if settings and settings.research_idea else None
+
             # Send initial progress event
             yield f"event: progress\ndata: {json.dumps({'status': 'started', 'message': '开始下载PDF...'})}\n\n"
 
@@ -613,6 +618,7 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 pdf_url=paper.pdf_url,
                 title=paper.title,
                 user_id=f"paper-{paper_id}",
+                idea_input=idea_input,
             ):
                 received_events.append(event.event)
 
