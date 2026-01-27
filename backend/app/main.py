@@ -607,12 +607,15 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             thought_parts = []
             answer_parts = []
             final_outputs = None
+            received_events = []  # Track event types for debugging
 
             async for event in dify_client.analyze_paper_stream(
                 pdf_url=paper.pdf_url,
                 title=paper.title,
                 user_id=f"paper-{paper_id}",
             ):
+                received_events.append(event.event)
+
                 # Handle thought (R1 thinking process)
                 if event.thought:
                     thought_parts.append(event.thought)
@@ -635,8 +638,37 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                     if node_title:
                         yield f"event: progress\ndata: {json.dumps({'status': 'node_finished', 'message': f'完成节点: {node_title}'})}\n\n"
                 elif event.event == "workflow_finished":
+                    # Debug: log the raw data structure
+                    print(f"[Dify Debug] workflow_finished data keys: {list(event.data.keys())}")
+                    if "data" in event.data:
+                        print(f"[Dify Debug] event.data.data keys: {list(event.data['data'].keys()) if isinstance(event.data['data'], dict) else 'not a dict'}")
+
                     if event.outputs:
                         final_outputs = event.outputs
+                    # Also try to extract from event.data directly
+                    elif not final_outputs:
+                        data = event.data
+                        if isinstance(data.get("data"), dict) and "outputs" in data["data"]:
+                            final_outputs = data["data"]["outputs"]
+                        elif isinstance(data.get("outputs"), dict):
+                            final_outputs = data["outputs"]
+                        # Try data.data.outputs even if not dict check
+                        elif isinstance(data.get("data"), dict):
+                            nested = data["data"]
+                            if "outputs" in nested:
+                                final_outputs = nested["outputs"]
+
+                    if final_outputs:
+                        print(f"[Dify Debug] Successfully extracted outputs with keys: {list(final_outputs.keys()) if isinstance(final_outputs, dict) else 'not a dict'}")
+                # Handle message_end event (some Dify versions use this)
+                elif event.event == "message_end":
+                    if event.outputs and not final_outputs:
+                        final_outputs = event.outputs
+                # Handle Dify error event
+                elif event.event == "error":
+                    error_msg = event.data.get("message", "") or event.data.get("error", "Unknown Dify error")
+                    print(f"[Dify Debug] Error event received: {error_msg}")
+                    raise DifyClientError(f"Dify error: {error_msg}")
 
             # Process final result
             if final_outputs:
@@ -644,7 +676,10 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             elif answer_parts:
                 result = dify_client._parse_answer("".join(answer_parts), "".join(thought_parts))
             else:
-                raise DifyClientError("No output received from Dify workflow")
+                # Log debug info
+                unique_events = list(set(received_events))
+                print(f"[Dify Debug] Paper {paper_id}: No output. Events received: {unique_events}")
+                raise DifyClientError(f"No output received from Dify workflow. Events: {unique_events}")
 
             # Convert to LLMAnalysis for database storage
             analysis = dify_client.to_llm_analysis(result)

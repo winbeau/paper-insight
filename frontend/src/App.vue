@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
-import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings } from './services/api'
+import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings, fetchPaper } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 import ArxivImportModal from './components/ArxivImportModal.vue'
@@ -187,6 +187,23 @@ function handlePaperDeleted(paperId: number) {
   }
 }
 
+// Hot reload: update a single paper in place without reordering the list
+async function updatePaperById(paperId: number) {
+  try {
+    const updatedPaper = await fetchPaper(paperId)
+    const index = papers.value.findIndex(p => p.id === paperId)
+    if (index !== -1) {
+      // Update paper in place, preserving list order
+      papers.value[index] = updatedPaper
+    }
+    // Also update stats since paper is now processed
+    const newStats = await fetchStats()
+    stats.value = newStats
+  } catch (e) {
+    console.error('Failed to update paper:', e)
+  }
+}
+
 async function handlePaperImported(paperId: number, isNew: boolean) {
   // Reload data to show the new paper
   await loadData()
@@ -324,7 +341,7 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
             :auto-process="processingPaperIds.has(paper.id)"
             class="animate-slide-up"
             :style="{ animationDelay: `${filteredPapers.indexOf(paper) * 50}ms` }"
-            @refresh="loadData"
+            @refresh="updatePaperById"
             @delete="handlePaperDeleted"
             @processing-done="handleProcessingDone"
           />

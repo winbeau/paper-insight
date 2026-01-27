@@ -17,7 +17,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  refresh: []
+  refresh: [id: number]
   delete: [id: number]
   'processing-done': [id: number, success: boolean]  // Emitted when auto-processing completes
 }>()
@@ -61,7 +61,7 @@ const {
   toRef(() => props.paper.id),
   toRef(() => props.paper.processing_status),
   toRef(() => props.paper.is_processed),
-  () => emit('refresh')
+  (paperId) => emit('refresh', paperId)
 )
 
 // Auto-process when autoProcess prop becomes true

@@ -306,11 +306,20 @@ class DifyClient:
             event.thought = data["thought"]
         if "answer" in data:
             event.answer = data["answer"]
-        # outputs may be at top level or nested under data.data
+        # outputs may be at top level or nested under data.data or data.outputs
         if "outputs" in data:
             event.outputs = data["outputs"]
-        elif isinstance(data.get("data"), dict) and "outputs" in data["data"]:
-            event.outputs = data["data"]["outputs"]
+        elif isinstance(data.get("data"), dict):
+            nested_data = data["data"]
+            if "outputs" in nested_data:
+                event.outputs = nested_data["outputs"]
+            # Also check for outputs inside workflow_run
+            elif isinstance(nested_data.get("outputs"), dict):
+                event.outputs = nested_data["outputs"]
+        # Some Dify versions put it under data.workflow_run.outputs
+        if not event.outputs and isinstance(data.get("workflow_run"), dict):
+            if "outputs" in data["workflow_run"]:
+                event.outputs = data["workflow_run"]["outputs"]
 
         return event
 

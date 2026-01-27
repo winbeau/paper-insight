@@ -40,7 +40,7 @@ export function useStreamProcessing(
   paperId: Ref<number>,
   processingStatus: Ref<string>,
   _isProcessed: Ref<boolean>,
-  onRefresh: () => void
+  onRefresh: (paperId: number) => void
 ): StreamProcessingState & StreamProcessingComputed & StreamProcessingHandlers {
   // State
   const isStreaming = ref(false)
@@ -234,7 +234,7 @@ export function useStreamProcessing(
         isStreaming.value = false
         isRetrying.value = false
         localStatus.value = null
-        onRefresh()
+        onRefresh(paperId.value)
       },
     })
 
