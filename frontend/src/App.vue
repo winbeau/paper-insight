@@ -94,6 +94,15 @@ onMounted(() => {
 function handleSettingsSaved() {
   loadData() // Reload all data including papers and settings
 }
+
+function handlePaperDeleted(paperId: number) {
+  // Remove paper from list immediately for hot reload
+  papers.value = papers.value.filter(p => p.id !== paperId)
+  // Update stats
+  if (stats.value) {
+    stats.value.total_papers = Math.max(0, stats.value.total_papers - 1)
+  }
+}
 </script>
 
 <template>
@@ -215,6 +224,7 @@ function handleSettingsSaved() {
             class="animate-slide-up"
             :style="{ animationDelay: `${filteredPapers.indexOf(paper) * 50}ms` }"
             @refresh="loadData"
+            @delete="handlePaperDeleted"
           />
         </div>
       </div>

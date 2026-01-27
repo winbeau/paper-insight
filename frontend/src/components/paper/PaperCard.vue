@@ -41,6 +41,7 @@ let streamAbortFn: (() => void) | null = null
 const showContextMenu = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const isDeleting = ref(false)
+const showDeleteConfirm = ref(false)
 
 const formattedDate = computed(() => {
   const date = new Date(props.paper.published)
@@ -125,24 +126,25 @@ function handleContextMenu(event: MouseEvent) {
 
 async function handleDelete() {
   if (isDeleting.value) return
+  showContextMenu.value = false
+  showDeleteConfirm.value = true
+}
 
-  const confirmed = window.confirm(`确定要删除这篇论文吗？\n\n${props.paper.title}`)
-  if (!confirmed) {
-    showContextMenu.value = false
-    return
-  }
-
+async function confirmDelete() {
   isDeleting.value = true
   try {
     await deletePaper(props.paper.id)
     emit('delete', props.paper.id)
   } catch (error) {
     console.error('Failed to delete paper:', error)
-    alert('删除失败，请重试')
   } finally {
     isDeleting.value = false
-    showContextMenu.value = false
+    showDeleteConfirm.value = false
   }
+}
+
+function cancelDelete() {
+  showDeleteConfirm.value = false
 }
 
 function handleContextRetry() {
@@ -150,31 +152,63 @@ function handleContextRetry() {
   handleRetry()
 }
 
+// Pre-defined workflow steps
+const WORKFLOW_STEPS = [
+  '下载 PDF',
+  '上传文件',
+  '用户输入',
+  '知识检索',
+  'LLM',
+  '整合输出',
+]
+
 // Map progress event to step update
 function handleProgressEvent(event: { status: string; message: string }) {
-  const steps = streamProgress.value
-
   if (event.status === 'started') {
-    // PDF download started
-    streamProgress.value = [
-      { label: '下载 PDF', status: 'active' },
-    ]
+    // Initialize all steps as pending, first one active
+    streamProgress.value = WORKFLOW_STEPS.map((label, index) => ({
+      label,
+      status: index === 0 ? 'active' : 'pending',
+    })) as ProgressStep[]
   } else if (event.status === 'workflow_started') {
-    // Mark download done, workflow started
-    if (steps.length > 0) steps[steps.length - 1].status = 'done'
-    steps.push({ label: '上传文件', status: 'done' })
+    // Mark first two steps as done
+    const steps = streamProgress.value
+    if (steps.length >= 2) {
+      steps[0].status = 'done'
+      steps[1].status = 'done'
+    }
+    streamProgress.value = [...steps]
   } else if (event.status === 'node_started') {
-    // Mark previous active step as done
-    const prevActive = steps.findIndex(s => s.status === 'active')
-    if (prevActive >= 0) steps[prevActive].status = 'done'
-
     // Extract node name
     const match = event.message.match(/执行节点:\s*(.+)/)
     const nodeName = match ? match[1] : event.message
-    steps.push({ label: nodeName, status: 'active' })
-  }
 
-  streamProgress.value = [...steps]
+    // Find and update the matching step
+    const steps = streamProgress.value
+    const stepIndex = steps.findIndex(s => s.label === nodeName)
+
+    if (stepIndex >= 0) {
+      // Mark all previous steps as done
+      for (let i = 0; i < stepIndex; i++) {
+        steps[i].status = 'done'
+      }
+      // Mark current step as active
+      steps[stepIndex].status = 'active'
+    } else {
+      // If node name doesn't match, just mark previous active as done and find next pending
+      const prevActive = steps.findIndex(s => s.status === 'active')
+      if (prevActive >= 0) {
+        steps[prevActive].status = 'done'
+        // Activate next pending step
+        const nextPending = steps.findIndex(s => s.status === 'pending')
+        if (nextPending >= 0) {
+          steps[nextPending].status = 'active'
+        }
+      }
+    }
+
+    streamProgress.value = [...steps]
+  }
 }
 
 async function handleRetry() {
@@ -395,6 +429,89 @@ function handleMouseMove(event: MouseEvent) {
             </svg>
             <span>{{ isDeleting ? '删除中...' : '删除论文' }}</span>
           </button>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Delete Confirmation Modal -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="showDeleteConfirm"
+          class="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+          @click.self="cancelDelete"
+        >
+          <!-- Backdrop -->
+          <div class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
+
+          <!-- Modal -->
+          <Transition
+            enter-active-class="transition duration-200 ease-out"
+            enter-from-class="opacity-0 scale-95 translate-y-4"
+            enter-to-class="opacity-100 scale-100 translate-y-0"
+            leave-active-class="transition duration-150 ease-in"
+            leave-from-class="opacity-100 scale-100 translate-y-0"
+            leave-to-class="opacity-0 scale-95 translate-y-4"
+          >
+            <div
+              v-if="showDeleteConfirm"
+              class="relative bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+              @click.stop
+            >
+              <!-- Header -->
+              <div class="px-6 pt-6 pb-4">
+                <div class="flex items-center gap-3">
+                  <div class="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <svg class="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 class="text-lg font-semibold text-gray-900">删除论文</h3>
+                    <p class="text-sm text-gray-500">此操作无法撤销</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Content -->
+              <div class="px-6 pb-4">
+                <p class="text-sm text-gray-600 mb-3">确定要删除以下论文吗？</p>
+                <div class="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <p class="text-sm font-medium text-gray-900 line-clamp-2">{{ paper.title }}</p>
+                  <p class="text-xs text-gray-500 mt-1">{{ paper.arxiv_id }}</p>
+                </div>
+              </div>
+
+              <!-- Footer -->
+              <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
+                <button
+                  class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  :disabled="isDeleting"
+                  @click="cancelDelete"
+                >
+                  取消
+                </button>
+                <button
+                  class="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="isDeleting"
+                  @click="confirmDelete"
+                >
+                  <svg v-if="isDeleting" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span>{{ isDeleting ? '删除中...' : '确认删除' }}</span>
+                </button>
+              </div>
+            </div>
+          </Transition>
         </div>
       </Transition>
     </Teleport>

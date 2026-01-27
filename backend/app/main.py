@@ -166,10 +166,22 @@ def get_paper(paper_id: int, session: Session = Depends(get_session)):
 
 @app.delete("/papers/{paper_id}")
 def delete_paper(paper_id: int, session: Session = Depends(get_session)):
-    """Delete a specific paper by ID."""
+    """Delete a specific paper by ID, including associated thumbnail."""
     paper = session.get(Paper, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
+
+    # Delete thumbnail file if exists
+    if paper.thumbnail_url:
+        # thumbnail_url format: /static/thumbnails/{arxiv_id}.jpg
+        thumbnail_path = Path(__file__).parent / paper.thumbnail_url.lstrip("/")
+        if thumbnail_path.exists():
+            try:
+                thumbnail_path.unlink()
+            except Exception as e:
+                print(f"Warning: Failed to delete thumbnail {thumbnail_path}: {e}")
+
+    # Delete paper from database
     session.delete(paper)
     session.commit()
     return {"message": "Paper deleted successfully", "paper_id": paper_id}
