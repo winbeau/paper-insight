@@ -229,6 +229,32 @@ def fetch_papers(
     return {"message": "Paper fetch started in background"}
 
 
+@app.post("/papers/process/batch")
+def process_papers_batch(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Trigger batch processing of all pending/failed papers."""
+    from sqlalchemy import or_
+
+    # Count papers to process
+    pending_count = len(session.exec(
+        select(Paper).where(
+            Paper.is_processed == False,
+            or_(
+                Paper.processing_status == "pending",
+                Paper.processing_status == "failed",
+            ),
+        )
+    ).all())
+
+    if pending_count == 0:
+        return {"message": "No papers to process", "count": 0}
+
+    background_tasks.add_task(run_daily_fetch)
+    return {"message": f"Batch processing started for {pending_count} papers", "count": pending_count}
+
+
 @app.post("/papers/{paper_id}/process")
 async def process_paper(paper_id: int, session: Session = Depends(get_session)):
     """Process a specific paper with LLM analysis."""

@@ -10,12 +10,14 @@ defineProps<{
   relevanceFilter: FilterType
   statusFilter: StatusFilter
   loading?: boolean
+  batchProcessing?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:relevanceFilter': [value: FilterType]
   'update:statusFilter': [value: StatusFilter]
   fetch: []
+  'batch-process': []
   'settings-saved': [] // New emit for when settings are saved
 }>()
 
@@ -70,24 +72,51 @@ function handleSettingsClose() {
         </div>
       </div>
 
-      <!-- Fetch Button -->
-      <button
-        @click="emit('fetch')"
-        :disabled="loading"
-        class="w-full mb-6 px-4 py-2.5 bg-[var(--color-ink-900)] text-white text-sm font-medium rounded-lg hover:bg-[var(--color-ink-700)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-      >
-        <svg
-          class="w-4 h-4"
-          :class="{ 'animate-spin': loading }"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+      <!-- Action Buttons -->
+      <div class="space-y-2 mb-6">
+        <!-- Fetch Button -->
+        <button
+          @click="emit('fetch')"
+          :disabled="loading"
+          class="w-full px-4 py-2.5 bg-[var(--color-ink-900)] text-white text-sm font-medium rounded-lg hover:bg-[var(--color-ink-700)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
         >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-        {{ loading ? 'Fetching...' : 'Fetch New Papers' }}
-      </button>
-      <div v-if="loading" class="-mt-4 mb-6">
+          <svg
+            class="w-4 h-4"
+            :class="{ 'animate-spin': loading }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          {{ loading ? 'Fetching...' : 'Fetch New Papers' }}
+        </button>
+
+        <!-- Batch Process Button -->
+        <button
+          @click="emit('batch-process')"
+          :disabled="batchProcessing || !stats?.pending_processing"
+          class="w-full px-4 py-2.5 bg-[var(--color-relevance-high)] text-white text-sm font-medium rounded-lg hover:bg-[var(--color-relevance-high)]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+        >
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <template v-if="!batchProcessing">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </template>
+            <template v-else>
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </template>
+          </svg>
+          {{ batchProcessing ? 'Processing...' : `Start Processing${stats?.pending_processing ? ` (${stats.pending_processing})` : ''}` }}
+        </button>
+      </div>
+      <div v-if="loading || batchProcessing" class="-mt-4 mb-6">
         <div class="relative h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-200)]">
           <div class="absolute inset-y-0 left-0 w-1/3 bg-[var(--color-ink-700)]/60 animate-progress-bar"></div>
         </div>

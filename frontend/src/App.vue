@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
-import { fetchPapers, fetchStats, triggerFetch, fetchSettings } from './services/api'
+import { fetchPapers, fetchStats, triggerFetch, triggerBatchProcess, fetchSettings } from './services/api'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 
@@ -10,6 +10,7 @@ const stats = ref<Stats | null>(null)
 const settings = ref<AppSettings | null>(null) // New settings ref
 const loading = ref(false)
 const fetching = ref(false)
+const batchProcessing = ref(false)
 const error = ref<string | null>(null)
 
 const relevanceFilter = ref<FilterType>('all')
@@ -87,6 +88,30 @@ async function handleFetch() {
   }
 }
 
+async function handleBatchProcess() {
+  batchProcessing.value = true
+  try {
+    const result = await triggerBatchProcess()
+    if (result.count === 0) {
+      // No papers to process
+      return
+    }
+    // Reload data periodically to show progress
+    const pollInterval = setInterval(() => {
+      loadData()
+    }, 5000)
+    // Stop polling after 5 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval)
+      batchProcessing.value = false
+      loadData()
+    }, 5 * 60 * 1000)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to start batch processing'
+    batchProcessing.value = false
+  }
+}
+
 onMounted(() => {
   loadData()
 })
@@ -114,9 +139,11 @@ function handlePaperDeleted(paperId: number) {
       :relevance-filter="relevanceFilter"
       :status-filter="statusFilter"
       :loading="fetching"
+      :batch-processing="batchProcessing"
       @update:relevance-filter="relevanceFilter = $event"
       @update:status-filter="statusFilter = $event"
       @fetch="handleFetch"
+      @batch-process="handleBatchProcess"
       @settings-saved="handleSettingsSaved"
     />
 

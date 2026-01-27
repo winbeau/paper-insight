@@ -48,6 +48,11 @@ export async function triggerFetch(): Promise<{ message: string }> {
   return data
 }
 
+export async function triggerBatchProcess(): Promise<{ message: string; count: number }> {
+  const { data } = await api.post<{ message: string; count: number }>('/papers/process/batch')
+  return data
+}
+
 export async function processPaper(id: number): Promise<{ message: string }> {
   const { data } = await api.post<{ message: string }>(`/papers/${id}/process`)
   return data

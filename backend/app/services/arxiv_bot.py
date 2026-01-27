@@ -273,13 +273,13 @@ async def run_daily_fetch_async():
             print(f"Reset {reset_count} stuck 'processing' papers to 'failed'")
 
         # Process unprocessed papers (Async with concurrency limit)
-        # Include: new papers (None status) and failed papers (for retry)
+        # Include: new papers (pending status) and failed papers (for retry)
         from sqlalchemy import or_
         unprocessed = session.exec(
             select(Paper).where(
                 Paper.is_processed == False,
                 or_(
-                    Paper.processing_status.is_(None),
+                    Paper.processing_status == "pending",
                     Paper.processing_status == "failed",
                 ),
             )
