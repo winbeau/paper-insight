@@ -27,6 +27,8 @@ const displayContent = computed(() => {
   <div
     v-if="content"
     class="heuristic-box group"
+    :class="{ 'cursor-pointer': needsExpansion }"
+    @click.stop="needsExpansion && (isExpanded = !isExpanded)"
   >
     <!-- Decorative gradient bar -->
     <div class="absolute top-0 left-0 right-0 h-1 rounded-t-xl opacity-80" style="background: linear-gradient(to right, #fbbf24, #f97316, #fbbf24);" />
