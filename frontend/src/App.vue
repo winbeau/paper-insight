@@ -159,8 +159,19 @@ function handleProcessingDone(paperId: number, _success: boolean) {
   startNextBatch()
 }
 
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  await loadData()
+
+  // Auto-recover stuck papers: if any papers have processing_status === "processing"
+  // but we have no active streams, trigger batch processing to reset and reprocess them.
+  // The backend /papers/pending endpoint will reset stuck papers to "pending".
+  const stuckPapers = papers.value.filter(
+    p => p.processing_status === 'processing' && !p.is_processed
+  )
+  if (stuckPapers.length > 0 && !batchProcessing.value) {
+    console.log(`[Auto-recovery] Found ${stuckPapers.length} stuck papers, triggering batch process...`)
+    setTimeout(() => handleBatchProcess(), 500)
+  }
 })
 
 function handleSettingsSaved() {

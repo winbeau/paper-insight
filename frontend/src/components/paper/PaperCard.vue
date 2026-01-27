@@ -342,6 +342,15 @@ function toggleExpand() {
           >
             {{ isRetrying ? 'retrying' : 'retry' }}
           </button>
+          <!-- Resume button for stuck "processing" papers (no active stream after page refresh) -->
+          <button
+            v-if="isProcessing && !isStreaming"
+            class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors"
+            @click.stop="handleRetry"
+            :disabled="isRetrying"
+          >
+            {{ isRetrying ? 'resuming' : 'resume' }}
+          </button>
           <button
             v-if="!isFailed && !isStreaming && !isProcessing"
             class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"

@@ -180,7 +180,26 @@ def get_papers(
 
 @app.get("/papers/pending")
 def get_pending_paper_ids(session: Session = Depends(get_session)):
-    """Get IDs of all pending/failed papers that need processing."""
+    """Get IDs of all pending/failed papers that need processing.
+
+    Also resets any stuck 'processing' papers to 'pending' so they can be retried.
+    This handles cases where the frontend was refreshed during processing.
+    """
+    # First, reset any stuck "processing" papers (no active stream after page refresh)
+    stuck_papers = session.exec(
+        select(Paper).where(
+            Paper.processing_status == "processing",
+            Paper.is_processed == False,
+        )
+    ).all()
+
+    if stuck_papers:
+        for paper in stuck_papers:
+            paper.processing_status = "pending"
+            session.add(paper)
+        session.commit()
+
+    # Then get all papers that need processing
     papers = session.exec(
         select(Paper.id).where(
             Paper.is_processed == False,
