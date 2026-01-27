@@ -74,6 +74,7 @@ export interface StreamErrorEvent {
 export interface ProgressStep {
   label: string
   status: 'pending' | 'active' | 'done' | 'error'
+  group?: number // Steps with same group number are displayed in parallel
 }
 
 export interface StreamDoneEvent {

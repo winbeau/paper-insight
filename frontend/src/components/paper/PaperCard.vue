@@ -119,9 +119,10 @@ onMounted(() => {
 function initBatchProcessingProgress() {
   if (streamProgress.value.length === 0 && !isStreaming.value) {
     // Show generic processing state - first step active, rest pending
-    streamProgress.value = WORKFLOW_STEPS.map((label, index) => ({
-      label,
+    streamProgress.value = WORKFLOW_STEPS.map((step, index) => ({
+      label: step.label,
       status: index === 0 ? 'active' : 'pending',
+      group: step.group,
     })) as ProgressStep[]
   }
 }
@@ -181,23 +182,26 @@ function handleContextRetry() {
   handleRetry()
 }
 
-// Pre-defined workflow steps
-const WORKFLOW_STEPS = [
-  '下载 PDF',
-  '上传文件',
-  '用户输入',
-  '知识检索',
-  'LLM',
-  '整合输出',
+// Pre-defined workflow steps with parallel groups
+// Steps with same group number are displayed in parallel
+const WORKFLOW_STEPS: Array<{ label: string; group?: number }> = [
+  { label: '下载PDF' },
+  { label: '上传文件' },
+  { label: '用户输入' },
+  { label: 'Parse File', group: 1 },
+  { label: '知识检索', group: 1 },
+  { label: 'LLM' },
+  { label: '整合输出' },
 ]
 
 // Map progress event to step update
 function handleProgressEvent(event: { status: string; message: string }) {
   if (event.status === 'started') {
     // Initialize all steps as pending, first one active
-    streamProgress.value = WORKFLOW_STEPS.map((label, index) => ({
-      label,
+    streamProgress.value = WORKFLOW_STEPS.map((step, index) => ({
+      label: step.label,
       status: index === 0 ? 'active' : 'pending',
+      group: step.group,
     })) as ProgressStep[]
   } else if (event.status === 'workflow_started') {
     // Mark first two steps as done
@@ -217,21 +221,75 @@ function handleProgressEvent(event: { status: string; message: string }) {
     const stepIndex = steps.findIndex(s => s.label === nodeName)
 
     if (stepIndex >= 0) {
-      // Mark all previous steps as done
+      // Mark all previous non-grouped steps as done (but not parallel ones that might still be running)
       for (let i = 0; i < stepIndex; i++) {
-        steps[i].status = 'done'
+        if (steps[i].group === undefined) {
+          steps[i].status = 'done'
+        }
       }
       // Mark current step as active
       steps[stepIndex].status = 'active'
+      // If this step has a group, also activate parallel steps in the same group
+      const currentGroup = steps[stepIndex].group
+      if (currentGroup !== undefined) {
+        steps.forEach((s) => {
+          if (s.group === currentGroup && s.status === 'pending') {
+            s.status = 'active'
+          }
+        })
+      }
     } else {
       // If node name doesn't match, just mark previous active as done and find next pending
       const prevActive = steps.findIndex(s => s.status === 'active')
       if (prevActive >= 0) {
-        steps[prevActive].status = 'done'
+        // Mark all active steps as done (including parallel ones)
+        steps.forEach(s => {
+          if (s.status === 'active') {
+            s.status = 'done'
+          }
+        })
         // Activate next pending step
         const nextPending = steps.findIndex(s => s.status === 'pending')
         if (nextPending >= 0) {
           steps[nextPending].status = 'active'
+          // If next step has a group, also activate parallel steps
+          const nextGroup = steps[nextPending].group
+          if (nextGroup !== undefined) {
+            steps.forEach((s) => {
+              if (s.group === nextGroup && s.status === 'pending') {
+                s.status = 'active'
+              }
+            })
+          }
+        }
+      }
+    }
+
+    streamProgress.value = [...steps]
+  } else if (event.status === 'node_finished') {
+    // Extract node name and mark only that specific step as done
+    const match = event.message.match(/完成节点:\s*(.+)/)
+    const nodeName = match ? match[1] : event.message
+
+    const steps = streamProgress.value
+    const stepIndex = steps.findIndex(s => s.label === nodeName)
+
+    if (stepIndex >= 0) {
+      // Mark only this specific step as done (allows parallel steps to complete independently)
+      steps[stepIndex].status = 'done'
+
+      // Check if all steps in the same parallel group are done
+      const currentGroup = steps[stepIndex].group
+      if (currentGroup !== undefined) {
+        const groupSteps = steps.filter(s => s.group === currentGroup)
+        const allGroupDone = groupSteps.every(s => s.status === 'done')
+
+        // If all parallel steps are done, activate the next non-grouped step
+        if (allGroupDone) {
+          const nextPending = steps.findIndex(s => s.status === 'pending' && s.group === undefined)
+          if (nextPending >= 0) {
+            steps[nextPending].status = 'active'
+          }
         }
       }
     }

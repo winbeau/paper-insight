@@ -303,6 +303,10 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                     node_title = event.data.get("data", {}).get("title", "")
                     if node_title:
                         yield f"event: progress\ndata: {json.dumps({'status': 'node_started', 'message': f'执行节点: {node_title}'})}\n\n"
+                elif event.event == "node_finished":
+                    node_title = event.data.get("data", {}).get("title", "")
+                    if node_title:
+                        yield f"event: progress\ndata: {json.dumps({'status': 'node_finished', 'message': f'完成节点: {node_title}'})}\n\n"
                 elif event.event == "workflow_finished":
                     if event.outputs:
                         final_outputs = event.outputs
