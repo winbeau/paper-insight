@@ -34,13 +34,12 @@ export interface StreamProcessingComputed {
 
 export interface StreamProcessingHandlers {
   handleRetry: () => void
-  initBatchProcessingProgress: () => void
 }
 
 export function useStreamProcessing(
   paperId: Ref<number>,
   processingStatus: Ref<string>,
-  isProcessed: Ref<boolean>,
+  _isProcessed: Ref<boolean>,
   onRefresh: () => void
 ): StreamProcessingState & StreamProcessingComputed & StreamProcessingHandlers {
   // State
@@ -81,25 +80,10 @@ export function useStreamProcessing(
     return 'pending'
   })
 
-  // Initialize progress steps for batch processing papers
-  function initBatchProcessingProgress() {
-    if (streamProgress.value.length === 0 && !isStreaming.value) {
-      // Show generic processing state - first step active, rest pending
-      streamProgress.value = WORKFLOW_STEPS.map((step, index) => ({
-        label: step.label,
-        status: index === 0 ? 'active' : 'pending',
-        group: step.group,
-      })) as ProgressStep[]
-    }
-  }
-
   // Watch for paper status changes (e.g., batch processing started after page load)
   watch(
     () => processingStatus.value,
     (newStatus, oldStatus) => {
-      if (newStatus === 'processing' && oldStatus !== 'processing' && !isProcessed.value) {
-        initBatchProcessingProgress()
-      }
       // Clear progress when processing completes or fails (and we weren't streaming)
       if (newStatus !== 'processing' && oldStatus === 'processing' && !isStreaming.value) {
         streamProgress.value = []
@@ -280,6 +264,5 @@ export function useStreamProcessing(
     statusTag,
     // Handlers
     handleRetry,
-    initBatchProcessingProgress,
   }
 }

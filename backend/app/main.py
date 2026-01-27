@@ -270,6 +270,19 @@ async def process_papers_batch_stream(session: Session = Depends(get_session)):
     import asyncio
     from sqlalchemy import or_
 
+    # Reset stuck "processing" papers so they can be retried in this batch
+    stuck_papers = session.exec(
+        select(Paper).where(
+            Paper.processing_status == "processing",
+            Paper.is_processed == False,
+        )
+    ).all()
+    if stuck_papers:
+        for paper in stuck_papers:
+            paper.processing_status = "failed"
+            session.add(paper)
+        session.commit()
+
     # Get papers to process
     papers_to_process = session.exec(
         select(Paper).where(

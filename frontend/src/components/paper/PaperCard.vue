@@ -55,7 +55,6 @@ const {
   statusLabel,
   statusTag,
   handleRetry,
-  initBatchProcessingProgress,
 } = useStreamProcessing(
   toRef(() => props.paper.id),
   toRef(() => props.paper.processing_status),
@@ -93,10 +92,6 @@ const categoriesList = computed(() => {
 // Lifecycle
 onMounted(() => {
   document.addEventListener('click', closeContextMenu)
-  // Initialize progress steps if paper is already in processing state (batch processing)
-  if (props.paper.processing_status === 'processing' && !props.paper.is_processed) {
-    initBatchProcessingProgress()
-  }
 })
 
 onUnmounted(() => {
