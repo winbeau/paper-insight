@@ -1,6 +1,7 @@
 """Paper processing and streaming endpoints."""
 
 import asyncio
+import contextlib
 import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -8,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from sqlalchemy import or_
 
+from app.logging_config import get_logger
 from app.models import Paper, AppSettings
 from app.dependencies import get_session
 from app.database import get_sync_session
@@ -20,6 +22,8 @@ from app.services.dify_client import (
     DifyRateLimitError,
 )
 from app.services.pdf_renderer import generate_thumbnail
+
+logger = get_logger("api.processing")
 
 router = APIRouter()
 
@@ -224,6 +228,7 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             paper.processing_status = "processing"
             session.add(paper)
             session.commit()
+            logger.info("Paper %s processing started: %s", paper_id, paper.title)
 
             settings = session.get(AppSettings, 1)
             idea_input = settings.research_idea if settings and settings.research_idea else None
@@ -235,49 +240,107 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             answer_parts = []
             final_outputs = None
 
-            async for event in dify_client.analyze_paper_stream(
-                pdf_url=paper.pdf_url,
-                title=paper.title,
-                user_id=f"paper-{paper_id}",
-                idea_input=idea_input,
-            ):
-                if event.thought:
-                    thought_parts.append(event.thought)
-                    yield f"event: thinking\ndata: {json.dumps({'thought': event.thought})}\n\n"
+            def _preview(text: str, limit: int = 160) -> str:
+                clean = " ".join(text.split())
+                return clean if len(clean) <= limit else f"{clean[:limit]}..."
 
-                if event.answer:
-                    answer_parts.append(event.answer)
-                    yield f"event: answer\ndata: {json.dumps({'answer': event.answer})}\n\n"
+            event_queue: asyncio.Queue = asyncio.Queue()
 
-                if event.event == "workflow_started":
-                    yield f"event: progress\ndata: {json.dumps({'status': 'workflow_started', 'message': 'Dify工作流已启动'})}\n\n"
-                elif event.event == "node_started":
-                    node_title = event.data.get("data", {}).get("title", "")
-                    if node_title:
-                        yield f"event: progress\ndata: {json.dumps({'status': 'node_started', 'message': f'执行节点: {node_title}'})}\n\n"
-                elif event.event == "node_finished":
-                    node_title = event.data.get("data", {}).get("title", "")
-                    if node_title:
-                        yield f"event: progress\ndata: {json.dumps({'status': 'node_finished', 'message': f'完成节点: {node_title}'})}\n\n"
-                elif event.event == "workflow_finished":
-                    if event.outputs:
-                        final_outputs = event.outputs
-                    elif not final_outputs:
-                        data = event.data
-                        if isinstance(data.get("data"), dict) and "outputs" in data["data"]:
-                            final_outputs = data["data"]["outputs"]
-                        elif isinstance(data.get("outputs"), dict):
-                            final_outputs = data["outputs"]
-                        elif isinstance(data.get("data"), dict):
-                            nested = data["data"]
-                            if "outputs" in nested:
-                                final_outputs = nested["outputs"]
-                elif event.event == "message_end":
-                    if event.outputs and not final_outputs:
-                        final_outputs = event.outputs
-                elif event.event == "error":
-                    error_msg = event.data.get("message", "") or event.data.get("error", "Unknown Dify error")
-                    raise DifyClientError(f"Dify error: {error_msg}")
+            async def consume_dify_events():
+                try:
+                    async for event in dify_client.analyze_paper_stream(
+                        pdf_url=paper.pdf_url,
+                        title=paper.title,
+                        user_id=f"paper-{paper_id}",
+                        idea_input=idea_input,
+                    ):
+                        await event_queue.put(("event", event))
+                except Exception as e:
+                    await event_queue.put(("error", e))
+                finally:
+                    await event_queue.put(("done", None))
+
+            consumer_task = asyncio.create_task(consume_dify_events())
+            keepalive_interval = 15.0
+
+            try:
+                while True:
+                    try:
+                        kind, payload = await asyncio.wait_for(
+                            event_queue.get(),
+                            timeout=keepalive_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        yield f"event: ping\ndata: {json.dumps({'ts': datetime.utcnow().isoformat()})}\n\n"
+                        continue
+
+                    if kind == "event":
+                        event = payload
+
+                        if event.thought:
+                            thought_parts.append(event.thought)
+                            logger.info(
+                                "Paper %s thought chunk (%d chars): %s",
+                                paper_id,
+                                len(event.thought),
+                                _preview(event.thought),
+                            )
+                            yield f"event: thinking\ndata: {json.dumps({'thought': event.thought})}\n\n"
+
+                        if event.answer:
+                            answer_parts.append(event.answer)
+                            logger.info(
+                                "Paper %s answer chunk (%d chars): %s",
+                                paper_id,
+                                len(event.answer),
+                                _preview(event.answer),
+                            )
+                            yield f"event: answer\ndata: {json.dumps({'answer': event.answer})}\n\n"
+
+                        if event.event == "workflow_started":
+                            logger.info("Paper %s workflow started", paper_id)
+                            yield f"event: progress\ndata: {json.dumps({'status': 'workflow_started', 'message': 'Dify工作流已启动'})}\n\n"
+                        elif event.event == "node_started":
+                            node_title = event.data.get("data", {}).get("title", "")
+                            if node_title:
+                                logger.info("Paper %s node started: %s", paper_id, node_title)
+                                yield f"event: progress\ndata: {json.dumps({'status': 'node_started', 'message': f'执行节点: {node_title}'})}\n\n"
+                        elif event.event == "node_finished":
+                            node_title = event.data.get("data", {}).get("title", "")
+                            if node_title:
+                                logger.info("Paper %s node finished: %s", paper_id, node_title)
+                                yield f"event: progress\ndata: {json.dumps({'status': 'node_finished', 'message': f'完成节点: {node_title}'})}\n\n"
+                        elif event.event == "workflow_finished":
+                            logger.info("Paper %s workflow finished", paper_id)
+                            if event.outputs:
+                                final_outputs = event.outputs
+                            elif not final_outputs:
+                                data = event.data
+                                if isinstance(data.get("data"), dict) and "outputs" in data["data"]:
+                                    final_outputs = data["data"]["outputs"]
+                                elif isinstance(data.get("outputs"), dict):
+                                    final_outputs = data["outputs"]
+                                elif isinstance(data.get("data"), dict):
+                                    nested = data["data"]
+                                    if "outputs" in nested:
+                                        final_outputs = nested["outputs"]
+                        elif event.event == "message_end":
+                            if event.outputs and not final_outputs:
+                                final_outputs = event.outputs
+                        elif event.event == "error":
+                            error_msg = event.data.get("message", "") or event.data.get("error", "Unknown Dify error")
+                            raise DifyClientError(f"Dify error: {error_msg}")
+
+                    elif kind == "error":
+                        raise payload
+
+                    elif kind == "done":
+                        break
+            finally:
+                if not consumer_task.done():
+                    consumer_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer_task
 
             if final_outputs:
                 result = dify_client._parse_outputs(final_outputs, "".join(thought_parts))
@@ -325,35 +388,41 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             }
             yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
+            logger.info("Paper %s processing completed", paper_id)
 
         except DifyEntityTooLargeError as e:
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
+            logger.error("Paper %s failed (entity too large): %s", paper_id, e)
             yield f"event: error\ndata: {json.dumps({'error': 'entity_too_large', 'message': str(e)})}\n\n"
 
         except DifyTimeoutError as e:
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
+            logger.error("Paper %s failed (timeout): %s", paper_id, e)
             yield f"event: error\ndata: {json.dumps({'error': 'timeout', 'message': str(e)})}\n\n"
 
         except DifyRateLimitError as e:
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
+            logger.error("Paper %s failed (rate limit): %s", paper_id, e)
             yield f"event: error\ndata: {json.dumps({'error': 'rate_limit', 'message': str(e)})}\n\n"
 
         except DifyClientError as e:
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
+            logger.error("Paper %s failed (dify error): %s", paper_id, e)
             yield f"event: error\ndata: {json.dumps({'error': 'dify_error', 'message': str(e)})}\n\n"
 
         except Exception as e:
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
+            logger.exception("Paper %s failed (unknown error)", paper_id)
             yield f"event: error\ndata: {json.dumps({'error': 'unknown', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
