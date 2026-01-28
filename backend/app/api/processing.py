@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import time
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -245,6 +246,14 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
                 return clean if len(clean) <= limit else f"{clean[:limit]}..."
 
             event_queue: asyncio.Queue = asyncio.Queue()
+            thought_total_chars = 0
+            answer_total_chars = 0
+            last_thought_log = 0.0
+            last_answer_log = 0.0
+            last_thought_count = 0
+            last_answer_count = 0
+            log_interval_sec = 2.0
+            log_chunk_threshold = 300
 
             async def consume_dify_events():
                 try:
@@ -279,22 +288,38 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
 
                         if event.thought:
                             thought_parts.append(event.thought)
-                            logger.info(
-                                "Paper %s thought chunk (%d chars): %s",
-                                paper_id,
-                                len(event.thought),
-                                _preview(event.thought),
-                            )
+                            thought_total_chars += len(event.thought)
+                            now = time.monotonic()
+                            if (
+                                now - last_thought_log >= log_interval_sec
+                                or thought_total_chars - last_thought_count >= log_chunk_threshold
+                            ):
+                                logger.info(
+                                    "Paper %s thought stream (%d chars total): %s",
+                                    paper_id,
+                                    thought_total_chars,
+                                    _preview(event.thought),
+                                )
+                                last_thought_log = now
+                                last_thought_count = thought_total_chars
                             yield f"event: thinking\ndata: {json.dumps({'thought': event.thought})}\n\n"
 
                         if event.answer:
                             answer_parts.append(event.answer)
-                            logger.info(
-                                "Paper %s answer chunk (%d chars): %s",
-                                paper_id,
-                                len(event.answer),
-                                _preview(event.answer),
-                            )
+                            answer_total_chars += len(event.answer)
+                            now = time.monotonic()
+                            if (
+                                now - last_answer_log >= log_interval_sec
+                                or answer_total_chars - last_answer_count >= log_chunk_threshold
+                            ):
+                                logger.info(
+                                    "Paper %s answer stream (%d chars total): %s",
+                                    paper_id,
+                                    answer_total_chars,
+                                    _preview(event.answer),
+                                )
+                                last_answer_log = now
+                                last_answer_count = answer_total_chars
                             yield f"event: answer\ndata: {json.dumps({'answer': event.answer})}\n\n"
 
                         if event.event == "workflow_started":
@@ -388,7 +413,12 @@ async def process_paper_stream(paper_id: int, session: Session = Depends(get_ses
             }
             yield f"event: result\ndata: {json.dumps(result_data, ensure_ascii=False)}\n\n"
             yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
-            logger.info("Paper %s processing completed", paper_id)
+            logger.info(
+                "Paper %s processing completed (thought=%d chars, answer=%d chars)",
+                paper_id,
+                thought_total_chars,
+                answer_total_chars,
+            )
 
         except DifyEntityTooLargeError as e:
             paper.processing_status = "failed"
