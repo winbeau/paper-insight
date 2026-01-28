@@ -1,5 +1,4 @@
 import asyncio
-import os
 import arxiv
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -8,19 +7,8 @@ from sqlmodel import Session, select
 from app.models import Paper, PaperCreate, AppSettings
 from app.database import get_sync_session
 from app.services.pdf_renderer import generate_thumbnail
+from app.services.dify_client import get_dify_client
 
-
-def _get_analysis_client():
-    """
-    Get the appropriate analysis client based on configuration.
-    Prefers Dify if DIFY_API_KEY is set, otherwise falls back to LLMBrain.
-    """
-    if os.getenv("DIFY_API_KEY"):
-        from app.services.dify_client import get_dify_client
-        return get_dify_client(), "dify"
-    else:
-        from app.services.llm_brain import get_llm_brain
-        return get_llm_brain(), "deepseek"
 
 class ArxivBot:
     """Bot for fetching and processing arXiv papers."""
@@ -170,7 +158,7 @@ class ArxivBot:
         return paper
 
     async def process_paper(self, session: Session, paper: Paper) -> bool:
-        """Process a paper with LLM analysis and thumbnail generation."""
+        """Process a paper with Dify LLM analysis and thumbnail generation."""
         if paper.is_processed:
             return False
 
@@ -180,52 +168,37 @@ class ArxivBot:
             session.commit()
             session.refresh(paper)
 
-            # Get the appropriate analysis client
-            client, client_type = _get_analysis_client()
+            # Get Dify client for analysis
+            client = get_dify_client()
             settings = session.get(AppSettings, 1)
-            system_prompt_override = settings.system_prompt if settings else None
+            idea_input = settings.research_idea if settings and settings.research_idea else None
 
-            # Execute analysis based on client type
-            loop = asyncio.get_running_loop()
-
-            if client_type == "dify":
-                # Use Dify client with PDF upload (async)
-                result = await client.analyze_paper(
-                    pdf_url=paper.pdf_url,
-                    title=paper.title,
-                    user_id=f"batch-paper-{paper.id}",
-                )
-                if result:
-                    analysis = client.to_llm_analysis(result)
-                else:
-                    analysis = None
-            else:
-                # Use legacy DeepSeek client (sync, run in executor)
-                analysis = await loop.run_in_executor(
-                    None,
-                    client.analyze_paper,
-                    paper.title,
-                    paper.abstract,
-                    system_prompt_override,
-                )
+            # Use Dify client with PDF upload (async)
+            result = await client.analyze_paper(
+                pdf_url=paper.pdf_url,
+                title=paper.title,
+                user_id=f"batch-paper-{paper.id}",
+                idea_input=idea_input,
+            )
 
             thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
 
-            # Update thumbnail regardless of relevance (visuals are good)
+            # Update thumbnail regardless of relevance
             if thumbnail_url:
                 paper.thumbnail_url = thumbnail_url
 
-            if analysis:
-                paper.summary_zh = analysis.summary_zh
+            if result:
+                analysis = client.to_llm_analysis(result)
+                paper.paper_essence = analysis.paper_essence
+                paper.concept_bridging = analysis.concept_bridging_str
+                paper.visual_verification = analysis.visual_verification
                 paper.relevance_score = analysis.relevance_score
                 paper.relevance_reason = analysis.relevance_reason
-                paper.heuristic_idea = analysis.heuristic_idea
+                paper.heuristic_suggestion = analysis.heuristic_suggestion
                 paper.is_processed = True
                 paper.processed_at = datetime.utcnow()
 
-                if analysis.relevance_score >= 9:
-                    paper.processing_status = "processed"
-                elif analysis.relevance_score >= 5:
+                if analysis.relevance_score >= 5:
                     paper.processing_status = "processed"
                 else:
                     paper.processing_status = "skipped"
@@ -233,6 +206,7 @@ class ArxivBot:
                 session.add(paper)
                 session.commit()
                 return True
+
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()

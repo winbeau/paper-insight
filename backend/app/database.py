@@ -1,5 +1,4 @@
 import os
-from typing import Generator
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import inspect, text
 from dotenv import load_dotenv
@@ -149,12 +148,6 @@ def ensure_paper_schema():
                     "AND processing_status = 'processed'"
                 )
             )
-
-
-def get_session() -> Generator[Session, None, None]:
-    """Dependency for getting database session."""
-    with Session(engine) as session:
-        yield session
 
 
 def get_sync_session() -> Session:
