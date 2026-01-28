@@ -1,5 +1,9 @@
 # PaperInsight
 
+<p align="center">
+  <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" />
+</p>
+
 > AI-powered arXiv paper tracker with cross-domain insight analysis for your research.
 
 ![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white)

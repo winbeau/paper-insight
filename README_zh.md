@@ -1,5 +1,9 @@
 # PaperInsight
 
+<p align="center">
+  <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" />
+</p>
+
 > AI 驱动的 arXiv 论文追踪器，为你的研究提供跨领域洞察分析。
 
 ![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white)
