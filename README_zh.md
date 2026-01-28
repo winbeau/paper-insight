@@ -1,17 +1,19 @@
-<p align="center">
-  <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" />
-</p>
-<h1 align="center">PaperInsight</h1>
+<div align="right">
+  <a href="README.md">English</a> | <a href="README_zh.md">中文</a>
+</div>
 
-> AI 驱动的 arXiv 论文追踪器，为你的研究提供跨领域洞察分析。
+<p align="center">
+  <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" style="margin-bottom: 6px;" />
+</p>
+<h1 align="center" style="margin-top: 0; font-size: 2.75rem;">PaperInsight</h1>
+
+<p align="center">AI 驱动的 arXiv 论文追踪器，为你的研究提供跨领域洞察分析。</p>
 
 ![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)
 ![Dify](https://img.shields.io/badge/Dify-Workflow-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-
-[English](README.md) | [中文](README_zh.md)
 
 ## 概述
 
@@ -31,13 +33,36 @@ PaperInsight 自动从 arXiv 获取论文，使用 Dify Workflow（集成 DeepSe
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 前端 | Vue 3, TypeScript, Vite, Tailwind CSS |
-| 后端 | FastAPI, SQLModel, SQLite |
-| AI | Dify Workflow API (DeepSeek R1) |
-| 数据源 | arXiv API |
-| 调度 | APScheduler |
+<table align="center">
+  <thead>
+    <tr>
+      <th>层级</th>
+      <th>技术</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>前端</td>
+      <td>Vue 3, TypeScript, Vite, Tailwind CSS</td>
+    </tr>
+    <tr>
+      <td>后端</td>
+      <td>FastAPI, SQLModel, SQLite</td>
+    </tr>
+    <tr>
+      <td>AI</td>
+      <td>Dify Workflow API (DeepSeek R1)</td>
+    </tr>
+    <tr>
+      <td>数据源</td>
+      <td>arXiv API</td>
+    </tr>
+    <tr>
+      <td>调度</td>
+      <td>APScheduler</td>
+    </tr>
+  </tbody>
+</table>
 
 ## 快速开始
 
