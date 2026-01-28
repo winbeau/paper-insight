@@ -11,6 +11,7 @@ import { useThumbnailPreview } from '../../composables/useThumbnailPreview'
 import { useStreamProcessing } from '../../composables/useStreamProcessing'
 import { deletePaper } from '../../services/api'
 import { getLogger } from '../../utils/logger'
+import { resolveApiUrl } from '../../utils/urls'
 
 const logger = getLogger('PaperCard')
 
@@ -38,7 +39,7 @@ const isDeleting = ref(false)
 const showDeleteConfirm = ref(false)
 
 // Thumbnail preview composable
-const thumbnailUrl = computed(() => props.paper.thumbnail_url)
+const thumbnailUrl = computed(() => resolveApiUrl(props.paper.thumbnail_url))
 const {
   isHoveringAbstract,
   thumbnailStyle,
@@ -266,7 +267,7 @@ function toggleExpand() {
 
               <ThumbnailPreview
                 :show="isHoveringAbstract"
-                :thumbnail-url="paper.thumbnail_url || ''"
+                :thumbnail-url="thumbnailUrl || ''"
                 :style="thumbnailStyle"
                 :origin="previewOrigin"
               />
