@@ -1,8 +1,4 @@
-# PaperInsight
-
-<p align="center">
-  <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" />
-</p>
+<h1><img src="frontend/public/logo.svg" alt="PaperInsight logo" width="32" height="32" /> PaperInsight</h1>
 
 > AI-powered arXiv paper tracker with cross-domain insight analysis for your research.
 
