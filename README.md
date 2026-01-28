@@ -5,15 +5,17 @@
 <p align="center">
   <img src="frontend/public/logo.svg" alt="PaperInsight logo" width="160" style="margin-bottom: 6px;" />
 </p>
-<h1 align="center" style="margin-top: 0; font-size: 2.75rem;">PaperInsight</h1>
+<h1 align="center" style="margin-top: 0; margin-bottom: 6px; font-size: 2.75rem;">PaperInsight</h1>
 
-<p align="center">AI-powered arXiv paper tracker with cross-domain insight analysis for your research.</p>
+<p align="center" style="margin-top: 0; margin-bottom: 6px;">AI-powered arXiv paper tracker with cross-domain insight analysis for your research.</p>
 
-![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)
-![Dify](https://img.shields.io/badge/Dify-Workflow-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+<p align="center" style="margin-top: 0;">
+  <img src="https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white" alt="Vue.js" />
+  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/Dify-Workflow-blue" alt="Dify" />
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
+</p>
 
 ## Overview
 
@@ -33,36 +35,13 @@ PaperInsight automatically fetches papers from arXiv, analyzes their relevance t
 
 ## Tech Stack
 
-<table align="center">
-  <thead>
-    <tr>
-      <th>Layer</th>
-      <th>Technology</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Frontend</td>
-      <td>Vue 3, TypeScript, Vite, Tailwind CSS</td>
-    </tr>
-    <tr>
-      <td>Backend</td>
-      <td>FastAPI, SQLModel, SQLite</td>
-    </tr>
-    <tr>
-      <td>AI</td>
-      <td>Dify Workflow API (DeepSeek R1)</td>
-    </tr>
-    <tr>
-      <td>Data Source</td>
-      <td>arXiv API</td>
-    </tr>
-    <tr>
-      <td>Scheduling</td>
-      <td>APScheduler</td>
-    </tr>
-  </tbody>
-</table>
+| Layer | Technology |
+|-------|------------|
+| Frontend | Vue 3, TypeScript, Vite, Tailwind CSS |
+| Backend | FastAPI, SQLModel, SQLite |
+| AI | Dify Workflow API (DeepSeek R1) |
+| Data Source | arXiv API |
+| Scheduling | APScheduler |
 
 ## Quick Start
 
