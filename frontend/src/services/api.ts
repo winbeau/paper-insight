@@ -11,7 +11,7 @@ import type {
   StreamEventType,
 } from '../types/paper'
 
-const baseURL = import.meta.env.VITE_API_BASE || '/api'
+const baseURL = import.meta.env.VITE_API_BASE_URL || '/paper-insight/api'
 
 export const api = axios.create({
   baseURL,
