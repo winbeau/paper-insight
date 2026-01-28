@@ -12,7 +12,7 @@ logger = get_logger("services.pdf_renderer")
 STATIC_DIR = Path(__file__).parent.parent / "static"
 THUMBNAILS_DIR = STATIC_DIR / "thumbnails"
 
-# Ensure directories exist
+# Ensure base directory exists on import
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -28,9 +28,22 @@ async def generate_thumbnail(arxiv_id: str, pdf_url: str) -> Optional[str]:
         str: Relative URL path to the thumbnail (e.g., "/static/thumbnails/1234.5678.jpg")
         None: If generation fails.
     """
-    filename = f"{arxiv_id}.jpg"
+    safe_id = (
+        arxiv_id.replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace(" ", "_")
+    )
+    filename = f"{safe_id}.jpg"
     file_path = THUMBNAILS_DIR / filename
     relative_url = f"/static/thumbnails/{filename}"
+
+    # 0. Ensure output directory exists (may be cleaned between runs)
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.error("Failed to ensure thumbnail directory %s: %s", file_path.parent, e)
+        return None
 
     # 1. Check cache
     if file_path.exists():
@@ -69,6 +82,7 @@ def _render_thumbnail(pdf_data: bytes, file_path: Path) -> bool:
     """Render the first page of a PDF to a thumbnail on disk."""
     doc = None
     try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         doc = fitz.open(stream=pdf_data, filetype="pdf")
         if len(doc) < 1:
             return False
