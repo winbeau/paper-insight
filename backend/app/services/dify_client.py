@@ -17,8 +17,11 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from app.models import LLMAnalysis
+from app.logging_config import get_logger
 
 load_dotenv()
+
+logger = get_logger("services.dify_client")
 
 
 # Default idea template for paper analysis
@@ -364,7 +367,7 @@ class DifyClient:
             return None
 
         except DifyClientError as e:
-            print(f"Dify analysis error: {e}")
+            logger.error("Dify analysis error: %s", e)
             return None
 
     def _parse_outputs(

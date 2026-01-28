@@ -10,6 +10,9 @@ import DeleteConfirmModal from './DeleteConfirmModal.vue'
 import { useThumbnailPreview } from '../../composables/useThumbnailPreview'
 import { useStreamProcessing } from '../../composables/useStreamProcessing'
 import { deletePaper } from '../../services/api'
+import { getLogger } from '../../utils/logger'
+
+const logger = getLogger('PaperCard')
 
 const props = defineProps<{
   paper: Paper
@@ -145,7 +148,7 @@ async function confirmDelete() {
     await deletePaper(props.paper.id)
     emit('delete', props.paper.id)
   } catch (error) {
-    console.error('Failed to delete paper:', error)
+    logger.error('Failed to delete paper', error)
   } finally {
     isDeleting.value = false
     showDeleteConfirm.value = false

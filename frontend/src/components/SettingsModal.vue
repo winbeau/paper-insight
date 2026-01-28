@@ -2,6 +2,9 @@
 import { ref, onMounted } from 'vue'
 import type { AppSettings } from '../types/paper'
 import { api } from '../services/api'
+import { getLogger } from '../utils/logger'
+
+const logger = getLogger('SettingsModal')
 
 interface ArxivOption {
   code: string
@@ -36,7 +39,7 @@ onMounted(async () => {
         settings.value.arxiv_categories = []
     }
   } catch (e) {
-    console.error('Failed to load settings:', e)
+    logger.error('Failed to load settings', e)
   } finally {
     loading.value = false
   }
@@ -48,7 +51,7 @@ async function saveSettings() {
     await api.put('/settings', settings.value)
     emit('close')
   } catch (e) {
-    console.error('Failed to save settings:', e)
+    logger.error('Failed to save settings', e)
   } finally {
     saving.value = false
   }

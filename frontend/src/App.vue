@@ -2,6 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
 import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings, fetchPaper } from './services/api'
+import { getLogger } from './utils/logger'
+
+const logger = getLogger('App')
 import AppSidebar from './components/layout/AppSidebar.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 import ArxivImportModal from './components/ArxivImportModal.vue'
@@ -72,7 +75,7 @@ async function loadData() {
     settings.value = settingsData // Update settings ref
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load data'
-    console.error('Failed to load data:', e)
+    logger.error('Failed to load data', e)
   } finally {
     loading.value = false
   }
@@ -169,7 +172,7 @@ onMounted(async () => {
     p => p.processing_status === 'processing' && !p.is_processed
   )
   if (stuckPapers.length > 0 && !batchProcessing.value) {
-    console.log(`[Auto-recovery] Found ${stuckPapers.length} stuck papers, triggering batch process...`)
+    logger.info(`Auto-recovery: found ${stuckPapers.length} stuck papers, triggering batch process`)
     setTimeout(() => handleBatchProcess(), 500)
   }
 })
@@ -200,7 +203,7 @@ async function updatePaperById(paperId: number) {
     const newStats = await fetchStats()
     stats.value = newStats
   } catch (e) {
-    console.error('Failed to update paper:', e)
+    logger.error('Failed to update paper', e)
   }
 }
 

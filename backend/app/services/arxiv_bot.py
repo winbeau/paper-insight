@@ -4,10 +4,13 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlmodel import Session, select
 
+from app.logging_config import get_logger
 from app.models import Paper, PaperCreate, AppSettings
 from app.database import get_sync_session
 from app.services.pdf_renderer import generate_thumbnail
 from app.services.dify_client import get_dify_client
+
+logger = get_logger("services.arxiv_bot")
 
 
 class ArxivBot:
@@ -23,7 +26,7 @@ class ArxivBot:
     def build_query(self, session: Session) -> str:
         """Builds a targeted arXiv query using AppSettings or defaults."""
         settings = session.get(AppSettings, 1)
-        
+
         # Defaults
         default_categories = ['cs.CV', 'cs.LG', 'cs.CL']
         default_focus = (
@@ -38,43 +41,36 @@ class ArxivBot:
         if settings:
             if settings.arxiv_categories:
                 categories = settings.arxiv_categories
-            
-            # Use focus_keywords if available, otherwise fallback to research_focus string or default
+
             if settings.focus_keywords and (not settings.research_focus or ";" in settings.research_focus):
-                # Construct OR logic for keywords: (all:k1) OR (all:"k 2")
                 keywords_parts = []
                 for k in settings.focus_keywords:
-                    # Wrap in quotes if it contains spaces and isn't already quoted
                     if " " in k and not (k.startswith('"') and k.endswith('"')):
                         term = f'"{k}"'
                     else:
                         term = k
                     keywords_parts.append(f'(all:{term})')
-                
+
                 if keywords_parts:
                     focus_query = f"({' OR '.join(keywords_parts)})"
-            
-            elif settings.research_focus and settings.research_focus.strip():
-                # Fallback to the raw string if keywords list is empty but string exists (backward compatibility)
-                focus_query = f"({settings.research_focus})"
-        
-        # 1. Categories
-        cat_query = "(" + " OR ".join([f"cat:{c}" for c in categories]) + ")"
 
-        # 2. Combine
+            elif settings.research_focus and settings.research_focus.strip():
+                focus_query = f"({settings.research_focus})"
+
+        cat_query = "(" + " OR ".join([f"cat:{c}" for c in categories]) + ")"
         final_query = f"{cat_query} AND {focus_query}"
-        
+
         return final_query
 
     def fetch_recent_papers(
         self,
         session: Session,
         max_results: int = 50,
-        hours_back: int = 168,  # 7 days to catch weekly arXiv updates
+        hours_back: int = 168,
     ) -> List[PaperCreate]:
         """Fetch recent targeted papers from arXiv."""
         query = self.build_query(session)
-        print(f"Executing Arxiv Query: {query}")
+        logger.info("Executing arXiv query: %s", query)
 
         search = arxiv.Search(
             query=query,
@@ -83,14 +79,11 @@ class ArxivBot:
             sort_order=arxiv.SortOrder.Descending,
         )
 
-        # Use UTC aware time for comparison
         cutoff_date = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         papers = []
 
         for result in self.client.results(search):
-            # Arxiv dates are timezone aware (UTC)
             if result.published < cutoff_date:
-                # Since results are sorted descending, we can stop early
                 break
 
             paper = PaperCreate(
@@ -99,7 +92,6 @@ class ArxivBot:
                 authors=", ".join([author.name for author in result.authors]),
                 abstract=result.summary.replace("\n", " ").strip(),
                 categories=", ".join(result.categories),
-                # Convert to naive UTC for DB storage
                 published=result.published.astimezone(timezone.utc).replace(tzinfo=None),
                 updated=result.updated.astimezone(timezone.utc).replace(tzinfo=None),
                 pdf_url=result.pdf_url,
@@ -109,17 +101,8 @@ class ArxivBot:
         return papers
 
     def fetch_paper_by_id(self, arxiv_id: str) -> Optional[PaperCreate]:
-        """Fetch a single paper from arXiv by its ID.
-
-        Args:
-            arxiv_id: The arXiv ID (e.g., '2301.12345' or '2301.12345v1')
-
-        Returns:
-            PaperCreate object if found, None otherwise
-        """
-        # Clean up the arxiv_id - remove version suffix if present for search
+        """Fetch a single paper from arXiv by its ID."""
         clean_id = arxiv_id.split('v')[0] if 'v' in arxiv_id else arxiv_id
-
         search = arxiv.Search(id_list=[clean_id])
 
         try:
@@ -139,7 +122,7 @@ class ArxivBot:
                 pdf_url=result.pdf_url,
             )
         except Exception as e:
-            print(f"Error fetching paper {arxiv_id}: {e}")
+            logger.error("Failed to fetch paper %s: %s", arxiv_id, e)
             return None
 
     def save_paper(self, session: Session, paper_data: PaperCreate) -> Optional[Paper]:
@@ -168,12 +151,10 @@ class ArxivBot:
             session.commit()
             session.refresh(paper)
 
-            # Get Dify client for analysis
             client = get_dify_client()
             settings = session.get(AppSettings, 1)
             idea_input = settings.research_idea if settings and settings.research_idea else None
 
-            # Use Dify client with PDF upload (async)
             result = await client.analyze_paper(
                 pdf_url=paper.pdf_url,
                 title=paper.title,
@@ -183,7 +164,6 @@ class ArxivBot:
 
             thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
 
-            # Update thumbnail regardless of relevance
             if thumbnail_url:
                 paper.thumbnail_url = thumbnail_url
 
@@ -205,6 +185,7 @@ class ArxivBot:
 
                 session.add(paper)
                 session.commit()
+                logger.info("Paper %s processed (score=%.1f)", paper.arxiv_id, analysis.relevance_score)
                 return True
 
             paper.processing_status = "failed"
@@ -213,7 +194,7 @@ class ArxivBot:
             session.refresh(paper)
 
         except Exception as e:
-            print(f"Error processing paper {paper.arxiv_id}: {e}")
+            logger.error("Failed to process paper %s: %s", paper.arxiv_id, e)
             paper.processing_status = "failed"
             session.add(paper)
             session.commit()
@@ -223,19 +204,16 @@ class ArxivBot:
 
 async def run_daily_fetch_async():
     """Async wrapper for daily fetch logic."""
-    print(f"[{datetime.now()}] Starting daily paper fetch...")
+    logger.info("Starting daily paper fetch")
 
     bot = ArxivBot()
     session = get_sync_session()
 
-    # Concurrency limit for paper processing
     MAX_CONCURRENT = 3
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
     async def process_with_semaphore(paper_id: int) -> bool:
-        """Process a paper with semaphore-controlled concurrency and its own session."""
         async with semaphore:
-            # Create a new session for each concurrent task to avoid session conflicts
             task_session = get_sync_session()
             try:
                 paper = task_session.get(Paper, paper_id)
@@ -246,23 +224,17 @@ async def run_daily_fetch_async():
                 task_session.close()
 
     try:
-        # Fetch new papers (Sync)
-        # Using run_in_executor to avoid blocking the event loop if this takes time
-        # We pass the session to fetch_recent_papers
         loop = asyncio.get_running_loop()
         papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 168)
-        print(f"Fetched {len(papers)} papers from arXiv")
+        logger.info("Fetched %d papers from arXiv", len(papers))
 
-        # Save to database (Sync)
         saved_count = 0
         for paper_data in papers:
             paper = bot.save_paper(session, paper_data)
             if paper:
                 saved_count += 1
-        print(f"Saved {saved_count} new papers to database")
+        logger.info("Saved %d new papers to database", saved_count)
 
-        # Reset stuck "processing" papers (processing for too long)
-        # Since we don't have a "processing_started_at" field, reset all stuck papers
         stuck_papers = session.exec(
             select(Paper).where(
                 Paper.processing_status == "processing",
@@ -278,10 +250,8 @@ async def run_daily_fetch_async():
 
         if reset_count > 0:
             session.commit()
-            print(f"Reset {reset_count} stuck 'processing' papers to 'failed'")
+            logger.warning("Reset %d stuck 'processing' papers to 'failed'", reset_count)
 
-        # Process unprocessed papers (Async with concurrency limit)
-        # Include: new papers (pending status) and failed papers (for retry)
         from sqlalchemy import or_
         unprocessed = session.exec(
             select(Paper).where(
@@ -293,12 +263,9 @@ async def run_daily_fetch_async():
             )
         ).all()
 
-        # Extract paper IDs for concurrent processing (avoid passing detached objects)
         paper_ids = [p.id for p in unprocessed]
-        print(f"Processing {len(paper_ids)} unprocessed papers (max {MAX_CONCURRENT} concurrent)...")
+        logger.info("Processing %d unprocessed papers (max %d concurrent)", len(paper_ids), MAX_CONCURRENT)
 
-        # Process papers concurrently with semaphore limit
-        # Each task gets its own session to avoid conflicts
         tasks = [process_with_semaphore(pid) for pid in paper_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -306,16 +273,16 @@ async def run_daily_fetch_async():
         error_count = sum(1 for r in results if isinstance(r, Exception))
 
         if error_count > 0:
-            print(f"  {error_count} papers encountered errors during processing")
+            logger.warning("%d papers encountered errors during processing", error_count)
 
-        print(f"Processed {processed_count} papers with LLM analysis")
+        logger.info("Processed %d papers with LLM analysis", processed_count)
 
     except Exception as e:
-        print(f"Error in daily fetch: {e}")
+        logger.error("Daily fetch failed: %s", e)
     finally:
         session.close()
 
-    print(f"[{datetime.now()}] Daily fetch completed")
+    logger.info("Daily fetch completed")
 
 def run_daily_fetch():
     """Entry point that runs the async fetcher in a loop."""

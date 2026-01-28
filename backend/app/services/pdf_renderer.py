@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Optional
 import asyncio
 
+from app.logging_config import get_logger
+
+logger = get_logger("services.pdf_renderer")
+
 # Constants
 STATIC_DIR = Path(__file__).parent.parent / "static"
 THUMBNAILS_DIR = STATIC_DIR / "thumbnails"
@@ -54,10 +58,10 @@ async def generate_thumbnail(arxiv_id: str, pdf_url: str) -> Optional[str]:
         return relative_url
 
     except httpx.HTTPStatusError as e:
-        print(f"Failed to download PDF for {arxiv_id}: {e}")
+        logger.warning("Failed to download PDF for %s: %s", arxiv_id, e)
         return None
     except Exception as e:
-        print(f"Error generating thumbnail for {arxiv_id}: {e}")
+        logger.error("Error generating thumbnail for %s: %s", arxiv_id, e)
         return None
 
 
@@ -74,7 +78,7 @@ def _render_thumbnail(pdf_data: bytes, file_path: Path) -> bool:
         pix.save(str(file_path))
         return True
     except Exception as e:
-        print(f"Error rendering thumbnail: {e}")
+        logger.error("Error rendering thumbnail: %s", e)
         return False
     finally:
         if doc is not None:

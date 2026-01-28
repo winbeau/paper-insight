@@ -8,9 +8,15 @@ from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.logging_config import setup_logging, get_logger
+from app.middleware import RequestLoggingMiddleware
 from app.database import create_db_and_tables, ensure_appsettings_schema, ensure_paper_schema
 from app.services.arxiv_bot import run_daily_fetch
 from app.api import api_router
+
+# Initialize logging before anything else
+setup_logging()
+logger = get_logger("main")
 
 scheduler = BackgroundScheduler()
 
@@ -29,12 +35,12 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.start()
-    print("[Scheduler] Started - Daily paper fetch scheduled at 06:00 UTC")
+    logger.info("Scheduler started — daily paper fetch at 06:00 UTC")
 
     yield
 
     scheduler.shutdown(wait=False)
-    print("[Scheduler] Shutdown complete")
+    logger.info("Scheduler shutdown complete")
 
 
 app = FastAPI(
@@ -44,6 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

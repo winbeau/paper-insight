@@ -7,9 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlmodel import Session, select
 from sqlalchemy import or_
 
+from app.logging_config import get_logger
 from app.models import Paper, PaperRead
 from app.dependencies import get_session
 from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
+
+logger = get_logger("api.papers")
 
 router = APIRouter()
 
@@ -98,7 +101,7 @@ def delete_paper(paper_id: int, session: Session = Depends(get_session)):
             try:
                 thumbnail_path.unlink()
             except Exception as e:
-                print(f"Warning: Failed to delete thumbnail {thumbnail_path}: {e}")
+                logger.warning("Failed to delete thumbnail %s: %s", thumbnail_path, e)
 
     session.delete(paper)
     session.commit()

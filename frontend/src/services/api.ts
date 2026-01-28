@@ -10,6 +10,9 @@ import type {
   StreamErrorEvent,
   StreamEventType,
 } from '../types/paper'
+import { getLogger } from '../utils/logger'
+
+const logger = getLogger('api')
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/paper-insight/api'
 
@@ -17,6 +20,35 @@ export const api = axios.create({
   baseURL,
   timeout: 30000,
 })
+
+// --- Request / Response logging interceptors ---
+api.interceptors.request.use(
+  (config) => {
+    logger.debug(`${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.params ?? '')
+    return config
+  },
+  (error) => {
+    logger.error('Request error', error)
+    return Promise.reject(error)
+  },
+)
+
+api.interceptors.response.use(
+  (response) => {
+    logger.debug(`${response.status} ${response.config.url}`)
+    return response
+  },
+  (error) => {
+    if (axios.isAxiosError(error)) {
+      logger.error(
+        `${error.response?.status ?? 'NETWORK'} ${error.config?.url ?? '?'}: ${error.message}`,
+      )
+    } else {
+      logger.error('Unexpected error', error)
+    }
+    return Promise.reject(error)
+  },
+)
 
 export async function fetchPapers(params?: {
   skip?: number
