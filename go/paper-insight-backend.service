@@ -1,0 +1,22 @@
+[Unit]
+Description=Paper Insight Backend Service
+After=network.target
+
+[Service]
+# 使用 winbeau 用户运行，避免使用 root
+User=winbeau
+Group=winbeau
+WorkingDirectory=/home/winbeau/paper-insight/backend
+
+# 加载环境变量文件
+EnvironmentFile=/home/winbeau/paper-insight/backend/.env
+
+# 启动命令：使用虚拟环境中的 uvicorn 启动，生产环境建议关闭 --reload，仅监听 127.0.0.1 供 Nginx 转发
+ExecStart=/home/winbeau/paper-insight/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 自动重启设置
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
