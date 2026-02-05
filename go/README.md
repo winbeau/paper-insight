@@ -47,13 +47,35 @@ sudo systemctl enable --now paper-insight-backend
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.cargo/env
 
-# 进入后端目录，创建虚拟环境并安装依赖
+# 进入后端目录，安装依赖
 cd /home/winbeau/paper-insight/backend
-uv venv .venv
-uv pip install -r requirements.txt
+uv sync
 ```
 
-**6. 验证服务**
+**6. 安装 npx、Node.js、pnpm 并准备前端依赖（使用 NodeSource 的 LTS 版本，避免系统自带过旧）**
+```bash
+# 使用 NodeSource 安装最新 LTS 的 Node.js（包含 npm + npx）
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# 再确保 node/npx 可用
+node -v
+npx -v
+
+# 然后装 pnpm
+sudo npm install -g pnpm
+
+# 进入前端目录，安装依赖
+cd /home/winbeau/paper-insight/frontend
+pnpm install
+
+# 构建前端（注意设置部署路径与 API 前缀）
+VITE_BASE=/paper-insight/ \
+VITE_API_BASE_URL=/paper-insight/api \
+pnpm exec vite build
+```
+
+**7. 验证服务**
 ```bash
 sudo systemctl status paper-insight-backend --no-pager
 curl -s http://127.0.0.1:8000/health
