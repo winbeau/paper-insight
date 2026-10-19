@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 from app.logging_config import get_logger
 from app.schemas import Provider
 from app.services.errors import PipelineError
+from app.services.usage import record as record_usage, usage_from_payload
 
 logger = get_logger("services.llm_client")
 
@@ -142,10 +143,20 @@ async def stream_chat(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     json_mode: bool = False,
+    purpose: str = "other",
 ) -> AsyncIterator[Tuple[StreamKind, str]]:
-    """Stream a chat completion as ("thinking" | "answer", text) deltas."""
+    """Stream a chat completion as ("thinking" | "answer", text) deltas.
+
+    Token usage (incl. prompt-cache hits) is recorded under `purpose`.
+    """
     client = get_client(provider)
-    params: Dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    params: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        # Usage arrives in a final chunk; needed for the cache hit rate
+        "stream_options": {"include_usage": True},
+    }
     if temperature is not None:
         params["temperature"] = temperature
     if max_tokens is not None:
@@ -167,6 +178,8 @@ async def stream_chat(
                 params.pop("temperature")
             elif "response_format" in params and _unsupported_param(exc, "response_format"):
                 params.pop("response_format")
+            elif "stream_options" in params and _unsupported_param(exc, "stream_options"):
+                params.pop("stream_options")
             else:
                 raise map_openai_error(exc, provider, model) from exc
             logger.info("Retrying %s without unsupported parameter: %s", model, exc.message)
@@ -177,8 +190,11 @@ async def stream_chat(
 
     splitter = ThinkTagSplitter()
     finish_reason = None
+    usage_payload = None
     try:
         async for chunk in stream:
+            if getattr(chunk, "usage", None):
+                usage_payload = chunk.usage
             if not chunk.choices:
                 continue
             finish_reason = chunk.choices[0].finish_reason or finish_reason
@@ -193,6 +209,9 @@ async def stream_chat(
                     yield item
         for item in splitter.flush():
             yield item
+        usage = usage_from_payload(usage_payload)
+        if usage is not None:
+            record_usage(purpose, model, usage)
         if finish_reason == "length":
             raise PipelineError(
                 "llm_error",

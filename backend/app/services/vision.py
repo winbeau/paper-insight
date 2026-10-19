@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple
 import fitz  # pymupdf
 
 from app.logging_config import get_logger
-from app.prompts import VISION_FIGURE_PROMPT, VISION_SYSTEM_PROMPT
+from app.prompts import VISION_FIGURE_PROMPT, VISION_PAPER_CONTEXT, VISION_SYSTEM_PROMPT
 from app.schemas import Provider, VisionConfig
 from app.services.errors import PipelineError
 from app.services.llm_client import chat_text
@@ -75,18 +75,17 @@ def _image_data_uri(path: Path) -> Tuple[str, int]:
 
 
 async def _describe(
-    provider: Provider, config: VisionConfig, title: str, figure: Figure, data_uri: str
+    provider: Provider, config: VisionConfig, paper_context: str, figure: Figure, data_uri: str
 ) -> str:
-    kind_zh = "表格" if figure.kind == "table" else "图"
-    prompt = VISION_FIGURE_PROMPT.format(
-        title=title,
+    figure_info = VISION_FIGURE_PROMPT.format(
         label=figure_label(figure),
-        kind=figure.kind,
-        kind_zh=kind_zh,
+        kind_zh="表格" if figure.kind == "table" else "图",
         page=figure.page or "?",
         caption=figure.caption or "（无图注）",
         context=(figure.context or "（无）")[:400],
     )
+    # Most to least stable (see app.prompts): the system prompt and the paper context
+    # are identical for every figure of a paper and come from the prompt cache.
     return await chat_text(
         provider,
         config.model,
@@ -95,13 +94,15 @@ async def _describe(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": paper_context},
+                    {"type": "text", "text": figure_info},
                     {"type": "image_url", "image_url": {"url": data_uri}},
                 ],
             },
         ],
         temperature=0.2,
         max_tokens=config.max_tokens,
+        purpose="vision",
     )
 
 
@@ -117,6 +118,7 @@ async def build_visual_evidence(
     config: VisionConfig,
     title: str,
     progress: ProgressFn,
+    abstract: str = "",
 ) -> str:
     """Describe the selected figures (bounded concurrency) and format the evidence list."""
     payloads: List[Tuple[Figure, str]] = []
@@ -134,6 +136,9 @@ async def build_visual_evidence(
     if not payloads:
         return ""
 
+    paper_context = VISION_PAPER_CONTEXT.format(
+        title=title, abstract=" ".join((abstract or "").split())[:1500] or "（无）"
+    )
     semaphore = asyncio.Semaphore(config.concurrency)
     done_count = 0
 
@@ -141,12 +146,17 @@ async def build_visual_evidence(
         nonlocal done_count
         async with semaphore:
             try:
-                return await _describe(provider, config, title, figure, uri)
+                return await _describe(provider, config, paper_context, figure, uri)
             finally:
                 done_count += 1
                 await progress(f"已识别 {done_count}/{len(payloads)} 张图表")
 
-    results = await asyncio.gather(*(run(f, u) for f, u in payloads), return_exceptions=True)
+    # The first figure runs alone so the shared prefix (system + paper context) is in the
+    # provider's cache before the remaining figures are sent in parallel.
+    first, rest = payloads[0], payloads[1:]
+    first_result = (await asyncio.gather(run(*first), return_exceptions=True))[0]
+    rest_results = await asyncio.gather(*(run(f, u) for f, u in rest), return_exceptions=True)
+    results = [first_result, *rest_results]
 
     lines = []
     errors: List[BaseException] = []

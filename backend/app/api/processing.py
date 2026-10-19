@@ -5,16 +5,18 @@ import contextlib
 import json
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.database import get_sync_session
 from app.logging_config import get_logger
 from app.models import Paper
-from app.services.analyzer import STEPS, process_paper
-from app.services.arxiv_bot import fetch_and_save
+from app.services.analyzer import STEPS, active_paper_ids, process_paper, reasoning_configured, stop_all
+from app.services.arxiv_bot import fetch_and_save, prefetch_parses
+from app.services.parse_queue import get_parse_queue
 from app.services.errors import PipelineError
 
 logger = get_logger("api.processing")
@@ -34,14 +36,14 @@ def sse(event: str, data: Any) -> str:
 
 
 @router.get("/fetch/stream")
-async def fetch_papers_stream():
-    """Fetch papers from arXiv with streaming progress updates."""
+async def fetch_papers_stream(direction_id: Optional[int] = None):
+    """Fetch papers from arXiv (one direction, or all) with streaming progress updates."""
 
     async def generate_events():
         try:
             yield sse("started", {"status": "started"})
             yield sse("fetching", {"status": "fetching", "message": "正在从 arXiv 获取论文..."})
-            fetched, saved = await fetch_and_save()
+            fetched, saved = await fetch_and_save(direction_id)
             yield sse("fetched", {"status": "fetched", "message": f"获取到 {fetched} 篇论文", "count": fetched})
             yield sse("done", {
                 "status": "done",
@@ -54,6 +56,29 @@ async def fetch_papers_stream():
             yield sse("error", {"error": str(e)})
 
     return StreamingResponse(generate_events(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+class PrepareRequest(BaseModel):
+    paper_ids: list[int]
+
+
+@router.post("/process/prepare")
+async def prepare_batch(body: PrepareRequest):  # async: the parse queue lives on the event loop
+    """Start MinerU on a whole batch now, so parsing runs ahead of the analyses."""
+    if not reasoning_configured():
+        return {"queued": 0}
+    return {"queued": prefetch_parses(body.paper_ids)}
+
+
+@router.post("/process/stop")
+async def stop_processing():
+    """Stop all running analyses (UI and scheduler), queued parses and local MinerU."""
+    return await stop_all()
+
+
+@router.get("/process/status")
+def processing_status():
+    return {"active": active_paper_ids(), **get_parse_queue().stats()}
 
 
 class _ChunkLogger:
@@ -145,7 +170,7 @@ async def process_paper_stream(paper_id: int):
                     else:
                         logger.exception("Paper %s failed (unexpected)", paper_id, exc_info=error)
                         code, message = "unknown", str(error)
-                    if code != "busy":
+                    if code not in ("busy", "stopped"):
                         logger.error("Paper %s failed (%s): %s", paper_id, code, message)
                     yield sse("error", {"error": code, "message": message})
                 elif kind == "done":

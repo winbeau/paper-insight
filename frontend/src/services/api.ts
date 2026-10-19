@@ -4,6 +4,11 @@ import type {
   Stats,
   AppSettings,
   AnalysisResult,
+  AutofillFields,
+  AutofillResult,
+  AutofillRound,
+  DirectionSummary,
+  UsageTotals,
   ArxivOption,
   MineruStatus,
   Provider,
@@ -59,6 +64,7 @@ export async function fetchPapers(params?: {
   limit?: number
   min_score?: number
   processed_only?: boolean
+  direction_id?: number
 }): Promise<Paper[]> {
   const { data } = await api.get<Paper[]>('/papers', { params })
   return data
@@ -82,20 +88,32 @@ export interface ImportPaperResult {
   is_new: boolean
 }
 
-export async function importPaper(arxivUrl: string): Promise<ImportPaperResult> {
+export async function importPaper(arxivUrl: string, directionId?: number | null): Promise<ImportPaperResult> {
   const { data } = await api.post<ImportPaperResult>('/papers/import', null, {
-    params: { arxiv_url: arxivUrl },
+    params: { arxiv_url: arxivUrl, direction_id: directionId ?? undefined },
   })
   return data
 }
 
-export async function fetchPendingPaperIds(): Promise<number[]> {
-  const { data } = await api.get<{ paper_ids: number[] }>('/papers/pending')
+export async function fetchPendingPaperIds(directionId?: number | null): Promise<number[]> {
+  const { data } = await api.get<{ paper_ids: number[] }>('/papers/pending', {
+    params: { direction_id: directionId ?? undefined },
+  })
   return data.paper_ids
 }
 
-export async function fetchStats(): Promise<Stats> {
-  const { data } = await api.get<Stats>('/stats')
+export async function fetchStats(directionId?: number | null): Promise<Stats> {
+  const { data } = await api.get<Stats>('/stats', { params: { direction_id: directionId ?? undefined } })
+  return data
+}
+
+export async function fetchDirections(): Promise<DirectionSummary[]> {
+  const { data } = await api.get<DirectionSummary[]>('/directions')
+  return data
+}
+
+export async function fetchUsage(): Promise<{ total: UsageTotals; by_purpose: Record<string, UsageTotals> }> {
+  const { data } = await api.get('/usage')
   return data
 }
 
@@ -111,6 +129,22 @@ export async function fetchSettings(): Promise<AppSettings> {
 
 export async function updateSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
   const { data } = await api.put<AppSettings>('/settings', settings)
+  return data
+}
+
+// --- Batch processing ---
+
+/** Queue MinerU parsing for a whole batch so it runs ahead of the analyses. */
+export async function prepareBatch(paperIds: number[]): Promise<{ queued: number }> {
+  const { data } = await api.post<{ queued: number }>('/papers/process/prepare', { paper_ids: paperIds })
+  return data
+}
+
+/** Stop every running analysis, queued parse and the local MinerU server. */
+export async function stopAllProcessing(): Promise<{ stopped: number; parses_cancelled: number }> {
+  const { data } = await api.post<{ stopped: number; parses_cancelled: number }>(
+    '/papers/process/stop', null, { timeout: 60000 },
+  )
   return data
 }
 
@@ -176,16 +210,20 @@ function readSSE(
   path: string,
   onEvent: (type: string, data: unknown) => void,
   onFailure: (error: Error, status?: number) => void,
+  body?: unknown,
 ): { abort: () => void } {
   const abortController = new AbortController()
 
   const run = async () => {
     try {
-      const response = await fetch(`${apiBase}${path}`, {
-        method: 'GET',
-        headers: { Accept: 'text/event-stream' },
-        signal: abortController.signal,
-      })
+      const response = await fetch(`${apiBase}${path}`, body === undefined
+        ? { method: 'GET', headers: { Accept: 'text/event-stream' }, signal: abortController.signal }
+        : {
+            method: 'POST',
+            headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: abortController.signal,
+          })
       if (!response.ok) {
         const errorText = await response.text()
         onFailure(new Error(errorText || `HTTP Error: ${response.status}`), response.status)
@@ -249,9 +287,12 @@ export interface FetchStreamCallbacks {
 }
 
 /** Fetch new papers from arXiv with streaming progress (does not analyze them). */
-export function fetchPapersStream(callbacks: FetchStreamCallbacks): { abort: () => void } {
+export function fetchPapersStream(
+  callbacks: FetchStreamCallbacks,
+  directionId?: number | null,
+): { abort: () => void } {
   return readSSE(
-    '/papers/fetch/stream',
+    directionId != null ? `/papers/fetch/stream?direction_id=${directionId}` : '/papers/fetch/stream',
     (type, data) => {
       const event = data as Record<string, unknown>
       if (type === 'fetching') callbacks.onFetching?.(event.message as string)
@@ -337,6 +378,44 @@ export function followMineruInstall(callbacks: MineruInstallCallbacks): { abort:
   )
 }
 
+// Research-direction auto-fill agent
+export interface AutofillCallbacks {
+  onStatus?: (message: string) => void
+  onThinking?: (chunk: string) => void
+  onDraft?: (fields: AutofillFields) => void
+  onRound?: (round: AutofillRound) => void
+  onResult?: (result: AutofillResult) => void
+  onError?: (error: StreamErrorEvent) => void
+  onDone?: () => void
+}
+
+/** Let the reasoning model fill a research direction from a plain-language description;
+ *  its arXiv query is tested against arXiv over several rounds. */
+export function streamResearchAutofill(
+  body: { description: string; provider?: Provider; model?: string },
+  callbacks: AutofillCallbacks,
+): { abort: () => void } {
+  return readSSE(
+    '/research/autofill',
+    (type, data) => {
+      switch (type) {
+        case 'status': callbacks.onStatus?.((data as { message: string }).message); break
+        case 'thinking': callbacks.onThinking?.((data as { thought: string }).thought); break
+        case 'draft': callbacks.onDraft?.(data as AutofillFields); break
+        case 'round': callbacks.onRound?.(data as AutofillRound); break
+        case 'result': callbacks.onResult?.(data as AutofillResult); break
+        case 'error': callbacks.onError?.(data as StreamErrorEvent); break
+        case 'done': callbacks.onDone?.(); break
+      }
+    },
+    (error, status) => callbacks.onError?.({
+      error: status ? `http_${status}` : 'stream_error',
+      message: error.message || '请求失败',
+    }),
+    body,
+  )
+}
+
 /** Human-readable message for a pipeline error event. */
 export function getStreamErrorMessage(error: StreamErrorEvent): string {
   switch (error.error) {
@@ -358,6 +437,8 @@ export function getStreamErrorMessage(error: StreamErrorEvent): string {
       return '该论文正在后台分析中'
     case 'interrupted':
       return '分析被中断，请重试'
+    case 'stopped':
+      return '已停止'
     default:
       return error.message || '未知错误'
   }

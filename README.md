@@ -40,6 +40,10 @@ Each paper gets: core innovation, concept bridging to your idea, figure-grounded
 ### Features
 
 - **Native Mac app** — one window, no server to run; data stays on your Mac
+- **Multiple research directions** — each with its own arXiv query, research idea and scoring prompt; one tab per direction in Settings and in the feed. A paper that matches several directions is analyzed once per direction, while PDF, MinerU parse and figure evidence are shared
+- **AI-assisted setup** — describe your research in plain words (✨ on each direction page); the reasoning model fills in categories, query, research idea and scoring rubric, and tests the query against live arXiv over several rounds (weekly volume + relevance of sample papers), keeping the best tested query
+- **Parsing runs ahead** — starting a batch queues MinerU for every paper at once; each paper's vision and reasoning steps run while MinerU already parses the next one. **Stop Processing** ends every run (UI, scheduler, MinerU) with one click; stopped papers return to pending
+- **Prompt-cache friendly** — prompts keep a byte-stable prefix (system prompt + research idea; shared paper context for figures; append-only agent conversation), so DeepSeek serves most input from its cache. The hit rate is shown per paper and at `/api/usage`
 - **Daily fetching** — 06:00 local time, with a catch-up run if the Mac was asleep
 - **Configurable models** — add DeepSeek, OpenAI, DashScope, SiliconFlow, Zhipu, Moonshot, OpenRouter, Ollama, LM Studio or any compatible endpoint; test them and list their models from Settings
 - **Local MinerU** — one click installs MinerU and pulls its model checkpoints into the app's data dir; the server starts on demand and stops when idle
@@ -65,7 +69,7 @@ Open **Settings**:
 2. **Pipeline**
    - **① MinerU**: either paste a token from [mineru.net](https://mineru.net) → API management (cloud), or choose **MinerU local** → **Install and pull models**. The local install needs ~3–6 GB of disk (16 GB RAM recommended); pick ModelScope as the model source if Hugging Face is slow for you. You can also point it at an existing `mineru-kit api-server`.
    - **② Vision / ③ Reasoning**: defaults to `deepseek-flash`; use **Test** to check a model.
-3. **Research** — arXiv categories, the search query, and your research idea (the context the reasoning model scores papers against). The analysis prompt can be overridden here.
+3. **Research directions** — one sub-tab per direction (**+** adds one): arXiv categories, the search query, your research idea (the context papers are scored against) and an optional scoring prompt. **✨ AI 帮我填写** (bottom-left of each page) fills all four from a plain-language description.
 4. **Proxy** (optional) — apps launched from Finder don't inherit shell proxy variables; set one here if arXiv / APIs need it.
 
 If MinerU fails on a paper, the paper is marked failed and can be retried.

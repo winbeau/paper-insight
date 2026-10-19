@@ -4,7 +4,7 @@ import type { AppSettings, ArxivOption } from '../types/paper'
 import { fetchConstants, fetchSettings, updateSettings } from '../services/api'
 import { getLogger } from '../utils/logger'
 import { analysisSetupProblem } from '../utils/settings'
-import ResearchTab from './settings/ResearchTab.vue'
+import DirectionsTab from './settings/DirectionsTab.vue'
 import ProvidersTab from './settings/ProvidersTab.vue'
 import PipelineTab from './settings/PipelineTab.vue'
 
@@ -14,6 +14,8 @@ type TabKey = 'research' | 'providers' | 'pipeline'
 
 const props = defineProps<{
   initialTab?: TabKey
+  initialDirectionId?: number | null
+  newDirection?: boolean
 }>()
 
 const emit = defineEmits(['close'])
@@ -37,6 +39,8 @@ onMounted(async () => {
   try {
     const [constants, current] = await Promise.all([fetchConstants(), fetchSettings()])
     arxivOptions.value = constants.arxiv_options
+    // Stable client keys: the per-direction AI fill runs are keyed by them
+    for (const direction of current.directions) direction._key = `d${direction.id}`
     settings.value = current
   } catch (e) {
     logger.error('Failed to load settings', e)
@@ -115,7 +119,13 @@ async function saveSettings() {
           </div>
 
           <template v-else-if="settings">
-            <ResearchTab v-if="activeTab === 'research'" v-model:settings="settings" :arxiv-options="arxivOptions" />
+            <DirectionsTab
+              v-if="activeTab === 'research'"
+              v-model:settings="settings"
+              :arxiv-options="arxivOptions"
+              :initial-direction-id="initialDirectionId"
+              :new-direction="newDirection"
+            />
             <ProvidersTab v-else-if="activeTab === 'providers'" v-model:settings="settings" />
             <PipelineTab v-else v-model:settings="settings" />
           </template>

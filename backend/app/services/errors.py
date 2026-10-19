@@ -12,6 +12,7 @@ ErrorCode = Literal[
     "entity_too_large",
     "busy",              # the paper is already being processed by another run
     "interrupted",       # the run was cancelled (client disconnect / app quit)
+    "stopped",           # stopped by the user ("stop all"); the paper goes back to pending
     "unknown",
 ]
 

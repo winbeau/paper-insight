@@ -30,7 +30,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 import httpx
 
-from app.config import IS_FROZEN, LOG_DIR, MINERU_DIR, bundled_bin_dir
+from app.config import DATA_DIR, IS_FROZEN, LOG_DIR, MINERU_DIR, bundled_bin_dir
 from app.logging_config import get_logger
 from app.services.errors import PipelineError
 
@@ -42,6 +42,7 @@ MIN_FREE_BYTES = 8 * 1024**3
 SERVER_START_TIMEOUT = 600   # first start loads models
 IDLE_SHUTDOWN = 10 * 60
 LOG_TAIL = 400
+UPLOAD_DIR = DATA_DIR / "mineru-uploads"
 
 
 def find_uv() -> Optional[str]:
@@ -93,6 +94,7 @@ class MineruRuntime:
         self._server: Optional[subprocess.Popen] = None
         self._server_url: Optional[str] = None
         self._server_tier: Optional[str] = None
+        self._server_concurrency = 1
         self._server_lock = asyncio.Lock()
         self._busy = 0
         self._last_used = 0.0
@@ -356,21 +358,36 @@ class MineruRuntime:
         self._busy += 1 if busy else -1
         self._last_used = time.monotonic()
 
-    async def ensure_server(self, tier: str) -> str:
+    def server_ready_for(self, tier: str, concurrency: int) -> bool:
+        return (
+            self._server_alive()
+            and self._server_tier == tier
+            and self._server_concurrency == concurrency
+            and self._server_url is not None
+        )
+
+    async def ensure_server(self, tier: str, concurrency: int = 1) -> str:
         """Start (or reuse) the local api-server and return its base URL."""
         async with self._server_lock:
-            if self._server_alive() and self._server_tier == tier and self._server_url:
+            if self.server_ready_for(tier, concurrency):
                 self._last_used = time.monotonic()
                 return self._server_url
             await self._stop_server_locked()
 
             port = _free_port()
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
             kit = str(self.bin_dir / "mineru-kit")
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             log_file = open(self.log_path, "ab")
             try:
                 self._server = subprocess.Popen(
-                    [kit, "api-server", "--host", "127.0.0.1", "--port", str(port), "--tier", tier],
+                    [
+                        kit, "api-server", "--host", "127.0.0.1", "--port", str(port),
+                        "--tier", tier, "--concurrency", str(concurrency),
+                        # MinerU locks its upload dir; keep it per data dir, not in the
+                        # (possibly shared) install dir
+                        "--upload-dir", str(UPLOAD_DIR),
+                    ],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     env=self._env(self._state().get("source")),
@@ -382,6 +399,7 @@ class MineruRuntime:
             self.pid_path.write_text(str(self._server.pid))
             self._server_url = f"http://127.0.0.1:{port}"
             self._server_tier = tier
+            self._server_concurrency = concurrency
             logger.info("Starting MinerU api-server pid=%s at %s", self._server.pid, self._server_url)
 
             deadline = time.monotonic() + SERVER_START_TIMEOUT

@@ -1,7 +1,5 @@
 """PDF parsing engines (MinerU cloud / local) behind one interface + cache."""
 
-import asyncio
-
 from app.schemas import ParserConfig
 from app.services.parsers.base import (
     Figure,
@@ -26,14 +24,6 @@ __all__ = [
     "validate_parser_config",
 ]
 
-# The frontend runs up to 3 analyses at once; a local MinerU (MPS/CPU) must only see one
-# document at a time, the cloud API is fine with a few.
-_semaphores = {
-    "mineru_local": asyncio.Semaphore(1),
-    "mineru_cloud": asyncio.Semaphore(3),
-}
-
-
 def validate_parser_config(config: ParserConfig) -> None:
     """Fail fast (before downloading anything) when the parse engine can't run."""
     get_parser(config)  # constructors validate tokens/URLs
@@ -54,18 +44,11 @@ def get_parser(config: ParserConfig) -> PdfParser:
 async def parse_document(
     config: ParserConfig, request: ParseRequest, progress: ProgressFn
 ) -> ParsedDocument:
-    """Parse a PDF with the configured engine, reusing a previous result if cached."""
+    """Parse a PDF with the configured engine, reusing a previous result if cached.
+
+    Concurrency (how many documents MinerU sees at once) is governed by services.parse_queue.
+    """
     cached = load_cached(request.out_dir)
     if cached is not None:
         return cached
-
-    parser = get_parser(config)
-    semaphore = _semaphores[parser.engine]
-    if semaphore.locked():
-        await progress("等待其他论文解析完成...")
-    async with semaphore:
-        # Another task may have parsed the same paper while we waited
-        cached = load_cached(request.out_dir)
-        if cached is not None:
-            return cached
-        return await parser.parse(request, progress)
+    return await get_parser(config).parse(request, progress)

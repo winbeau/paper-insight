@@ -16,13 +16,23 @@ logger = get_logger("services.pdf_renderer")
 
 MAX_PDF_BYTES = 200 * 1024 * 1024
 
+# One download per paper at a time (the parse queue may prefetch while an analysis starts)
+_download_locks: dict[str, asyncio.Lock] = {}
+
 
 async def ensure_pdf(arxiv_id: str, pdf_url: str) -> Path:
     """Return the cached PDF for a paper, downloading it on first use."""
     path = pdf_path_for(arxiv_id)
     if path.exists() and path.stat().st_size > 0:
         return path
+    lock = _download_locks.setdefault(arxiv_id, asyncio.Lock())
+    async with lock:
+        if path.exists() and path.stat().st_size > 0:
+            return path
+        return await _download_pdf(path, pdf_url)
 
+
+async def _download_pdf(path: Path, pdf_url: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".part")
     try:

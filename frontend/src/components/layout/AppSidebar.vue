@@ -11,6 +11,9 @@ defineProps<{
   statusFilter: StatusFilter
   loading?: boolean
   batchProcessing?: boolean
+  processingActive?: boolean  // any analysis running (batch, single paper or scheduler)
+  stopping?: boolean
+  activeDirectionId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -18,15 +21,21 @@ const emit = defineEmits<{
   'update:statusFilter': [value: StatusFilter]
   fetch: []
   'batch-process': []
+  'stop-processing': []
   'import': []
   'settings-saved': [] // New emit for when settings are saved
 }>()
 
 const showSettings = ref(false)
 const settingsTab = ref<'research' | 'providers' | 'pipeline'>('research')
+const settingsNewDirection = ref(false)
 
-function openSettings(tab: 'research' | 'providers' | 'pipeline' = 'research') {
+function openSettings(
+  tab: 'research' | 'providers' | 'pipeline' = 'research',
+  options: { newDirection?: boolean } = {},
+) {
   settingsTab.value = tab
+  settingsNewDirection.value = options.newDirection ?? false
   showSettings.value = true
 }
 
@@ -101,8 +110,24 @@ function handleSettingsClose() {
           {{ loading ? 'Fetching...' : 'Fetch New Papers' }}
         </button>
 
+        <!-- Stop Button (replaces Start while anything is being analyzed) -->
+        <button
+          v-if="processingActive"
+          @click="emit('stop-processing')"
+          :disabled="stopping"
+          class="w-full px-4 py-2.5 bg-white text-[var(--color-relevance-high)] text-sm font-medium rounded-lg border border-[var(--color-relevance-high)] hover:bg-[var(--color-relevance-high-bg)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          title="停止所有正在进行的分析与解析"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
+          </svg>
+          {{ stopping ? 'Stopping...' : 'Stop Processing' }}
+        </button>
+
         <!-- Batch Process Button -->
         <button
+          v-else
           @click="emit('batch-process')"
           :disabled="batchProcessing || !stats?.pending_processing"
           class="w-full px-4 py-2.5 bg-[var(--color-relevance-high)] text-white text-sm font-medium rounded-lg hover:bg-[var(--color-relevance-high)]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
@@ -143,7 +168,7 @@ function handleSettingsClose() {
           Import from arXiv
         </button>
       </div>
-      <div v-if="loading || batchProcessing" class="-mt-4 mb-6">
+      <div v-if="loading || processingActive" class="-mt-4 mb-6">
         <div class="relative h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-paper-200)]">
           <div class="absolute inset-y-0 left-0 w-1/3 bg-[var(--color-ink-700)]/60 animate-progress-bar"></div>
         </div>
@@ -198,6 +223,12 @@ function handleSettingsClose() {
       </button>
     </div>
 
-    <SettingsModal v-if="showSettings" :initial-tab="settingsTab" @close="handleSettingsClose" />
+    <SettingsModal
+      v-if="showSettings"
+      :initial-tab="settingsTab"
+      :initial-direction-id="activeDirectionId ?? null"
+      :new-direction="settingsNewDirection"
+      @close="handleSettingsClose"
+    />
   </aside>
 </template>

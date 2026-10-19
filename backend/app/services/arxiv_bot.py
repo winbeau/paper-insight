@@ -1,4 +1,6 @@
 import asyncio
+import re
+
 import arxiv
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -6,10 +8,41 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.logging_config import get_logger
-from app.models import Paper, PaperCreate, AppSettings
+from app.models import AppSettings, Paper, PaperCreate, ResearchDirection
 from app.database import get_sync_session
 
 logger = get_logger("services.arxiv_bot")
+
+
+DEFAULT_CATEGORIES = ["cs.CV", "cs.LG", "cs.CL"]
+DEFAULT_FOCUS = (
+    '((ti:transformer OR abs:transformer OR ti:diffusion OR abs:diffusion OR ti:DiT OR abs:DiT) AND '
+    '(ti:"kv cache" OR abs:"kv cache" OR ti:compression OR abs:compression OR ti:pruning OR abs:pruning OR '
+    'ti:quantization OR abs:quantization OR ti:sparse OR abs:sparse OR ti:"token merging" OR abs:"token merging" OR '
+    'ti:distillation OR abs:distillation OR ti:efficiency OR abs:efficiency))'
+)
+
+
+def compose_query(categories: List[str], research_focus: str, focus_keywords: List[str]) -> str:
+    """The arXiv search query the daily fetch uses: (categories) AND (focus).
+
+    A ';'-separated focus is treated as a keyword list (OR of all:keyword); anything else
+    is used as a raw arXiv query. Shared with the research-direction agent so the query it
+    tests is exactly the one that will run.
+    """
+    categories = categories or DEFAULT_CATEGORIES
+    focus_query = DEFAULT_FOCUS
+    if focus_keywords and (not research_focus or ";" in research_focus):
+        parts = []
+        for keyword in focus_keywords:
+            term = f'"{keyword}"' if " " in keyword and not (keyword.startswith('"') and keyword.endswith('"')) else keyword
+            parts.append(f"(all:{term})")
+        if parts:
+            focus_query = f"({' OR '.join(parts)})"
+    elif research_focus and research_focus.strip():
+        focus_query = f"({research_focus.strip()})"
+    cat_query = "(" + " OR ".join(f"cat:{c}" for c in categories) + ")"
+    return f"{cat_query} AND {focus_query}"
 
 
 class ArxivBot:
@@ -22,53 +55,13 @@ class ArxivBot:
             num_retries=3
         )
 
-    def build_query(self, session: Session) -> str:
-        """Builds a targeted arXiv query using AppSettings or defaults."""
-        settings = session.get(AppSettings, 1)
-
-        # Defaults
-        default_categories = ['cs.CV', 'cs.LG', 'cs.CL']
-        default_focus = (
-            '((ti:transformer OR abs:transformer OR ti:diffusion OR abs:diffusion OR ti:DiT OR abs:DiT) AND '
-            '(ti:"kv cache" OR abs:"kv cache" OR ti:compression OR abs:compression OR ti:pruning OR abs:pruning OR '
-            'ti:quantization OR abs:quantization OR ti:sparse OR abs:sparse OR ti:"token merging" OR abs:"token merging" OR '
-            'ti:distillation OR abs:distillation OR ti:efficiency OR abs:efficiency))'
-        )
-        categories = default_categories
-        focus_query = default_focus
-
-        if settings:
-            if settings.arxiv_categories:
-                categories = settings.arxiv_categories
-
-            if settings.focus_keywords and (not settings.research_focus or ";" in settings.research_focus):
-                keywords_parts = []
-                for k in settings.focus_keywords:
-                    if " " in k and not (k.startswith('"') and k.endswith('"')):
-                        term = f'"{k}"'
-                    else:
-                        term = k
-                    keywords_parts.append(f'(all:{term})')
-
-                if keywords_parts:
-                    focus_query = f"({' OR '.join(keywords_parts)})"
-
-            elif settings.research_focus and settings.research_focus.strip():
-                focus_query = f"({settings.research_focus})"
-
-        cat_query = "(" + " OR ".join([f"cat:{c}" for c in categories]) + ")"
-        final_query = f"{cat_query} AND {focus_query}"
-
-        return final_query
-
     def fetch_recent_papers(
         self,
-        session: Session,
+        query: str,
         max_results: int = 50,
         hours_back: int = 168,
     ) -> List[PaperCreate]:
-        """Fetch recent targeted papers from arXiv."""
-        query = self.build_query(session)
+        """Fetch recent papers matching an arXiv query (see compose_query)."""
         logger.info("Executing arXiv query: %s", query)
 
         search = arxiv.Search(
@@ -124,16 +117,20 @@ class ArxivBot:
             logger.error("Failed to fetch paper %s: %s", arxiv_id, e)
             return None
 
-    def save_paper(self, session: Session, paper_data: PaperCreate) -> Optional[Paper]:
-        """Save a paper to database if not exists."""
+    def save_paper(self, session: Session, paper_data: PaperCreate, direction_id: int) -> Optional[Paper]:
+        """Save a paper into a direction unless that direction already has it."""
+        base_id = re.sub(r"v\d+$", "", paper_data.arxiv_id)  # any version counts as the same paper
         existing = session.exec(
-            select(Paper).where(Paper.arxiv_id == paper_data.arxiv_id)
+            select(Paper).where(
+                Paper.direction_id == direction_id,
+                Paper.arxiv_id.startswith(base_id),
+            )
         ).first()
 
         if existing:
             return None
 
-        paper = Paper(**paper_data.model_dump())
+        paper = Paper(**paper_data.model_dump(), direction_id=direction_id)
         session.add(paper)
         session.commit()
         session.refresh(paper)
@@ -152,37 +149,89 @@ def _record_fetch_time() -> None:
         session.commit()
 
 
-async def fetch_and_save(max_results: int = 50, hours_back: int = 168) -> tuple[int, int]:
-    """Fetch recent papers from arXiv and store new ones. Returns (fetched, saved)."""
-    async with _fetch_lock:
-        bot = get_arxiv_bot()
-        with get_sync_session() as session:
-            loop = asyncio.get_running_loop()
-            papers = await loop.run_in_executor(
-                None, bot.fetch_recent_papers, session, max_results, hours_back
-            )
-            saved = sum(1 for paper_data in papers if bot.save_paper(session, paper_data))
-        _record_fetch_time()
-        logger.info("Fetched %d papers from arXiv, %d new", len(papers), saved)
-        return len(papers), saved
+def query_for_direction(direction: ResearchDirection) -> str:
+    return compose_query(
+        direction.arxiv_categories or [],
+        direction.research_focus or "",
+        direction.focus_keywords or [],
+    )
 
 
-def pending_paper_ids() -> List[int]:
+def list_directions() -> List[ResearchDirection]:
     with get_sync_session() as session:
         return list(session.exec(
-            select(Paper.id).where(
-                Paper.is_processed == False,
-                or_(
-                    Paper.processing_status == "pending",
-                    Paper.processing_status == "failed",
-                ),
-            )
+            select(ResearchDirection).order_by(ResearchDirection.position, ResearchDirection.id)
         ).all())
+
+
+async def fetch_and_save(
+    direction_id: Optional[int] = None, max_results: int = 50, hours_back: int = 168
+) -> tuple[int, int]:
+    """Fetch recent papers for one direction (or all) and store new ones.
+
+    Directions are fetched one after another under a lock (arXiv asks for slow,
+    sequential clients). Returns (fetched, saved) summed over the directions.
+    """
+    directions = [d for d in list_directions() if direction_id is None or d.id == direction_id]
+    if not directions:
+        raise ValueError("research direction not found")
+    fetched_total = saved_total = 0
+    async with _fetch_lock:
+        bot = get_arxiv_bot()
+        loop = asyncio.get_running_loop()
+        for direction in directions:
+            papers = await loop.run_in_executor(
+                None, bot.fetch_recent_papers, query_for_direction(direction), max_results, hours_back
+            )
+            with get_sync_session() as session:
+                saved = sum(1 for data in papers if bot.save_paper(session, data, direction.id))
+            logger.info("Direction %s (%s): fetched %d papers, %d new", direction.id, direction.name, len(papers), saved)
+            fetched_total += len(papers)
+            saved_total += saved
+        _record_fetch_time()
+    return fetched_total, saved_total
+
+
+def pending_paper_ids(direction_id: Optional[int] = None) -> List[int]:
+    with get_sync_session() as session:
+        query = select(Paper.id).where(
+            Paper.is_processed == False,
+            or_(
+                Paper.processing_status == "pending",
+                Paper.processing_status == "failed",
+            ),
+        )
+        if direction_id is not None:
+            query = query.where(Paper.direction_id == direction_id)
+        return list(session.exec(query.order_by(Paper.id)).all())
+
+
+def prefetch_parses(paper_ids: List[int]) -> int:
+    """Queue MinerU parsing for these papers right away (see services.parse_queue)."""
+    from app.schemas import load_settings
+    from app.services.errors import PipelineError
+    from app.services.parse_queue import ParseTarget, get_parse_queue
+    from app.services.parsers import validate_parser_config
+
+    with get_sync_session() as session:
+        settings = load_settings(session.get(AppSettings, 1))
+        papers = [session.get(Paper, pid) for pid in paper_ids]
+        targets = [
+            ParseTarget(arxiv_id=p.arxiv_id, title=p.title, pdf_url=p.pdf_url)
+            for p in papers
+            if p is not None and not p.is_processed
+        ]
+    try:
+        validate_parser_config(settings.pipeline.parser)
+    except PipelineError as e:
+        logger.info("Parse prefetch skipped: %s", e.message)
+        return 0
+    return get_parse_queue().prefetch(targets, settings.pipeline.parser)
 
 
 async def run_daily_fetch_async():
     """Fetch recent papers from arXiv, then analyze everything pending."""
-    from app.services.analyzer import analyze_paper, reasoning_configured
+    from app.services.analyzer import analyze_paper, current_generation, reasoning_configured
 
     logger.info("Starting daily paper fetch")
     try:
@@ -197,10 +246,14 @@ async def run_daily_fetch_async():
 
     paper_ids = pending_paper_ids()
     logger.info("Analyzing %d papers (max %d concurrent)", len(paper_ids), MAX_CONCURRENT)
+    prefetch_parses(paper_ids)
+    generation = current_generation()
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
     async def run(paper_id: int) -> bool:
         async with semaphore:
+            if current_generation() != generation:
+                return False  # "stop all" was pressed: don't start more papers
             return await analyze_paper(paper_id)
 
     results = await asyncio.gather(*(run(pid) for pid in paper_ids))

@@ -1,6 +1,7 @@
 export interface Paper {
   id: number
   arxiv_id: string
+  direction_id: number | null
   title: string
   authors: string
   abstract: string
@@ -61,6 +62,7 @@ export interface MineruLocalConfig {
   source: 'huggingface' | 'modelscope'
   external_url: string
   external_api_key: string
+  concurrency: number
 }
 
 export interface ModelRef {
@@ -91,12 +93,31 @@ export interface PipelineConfig {
   reasoning: ReasoningConfig
 }
 
-export interface AppSettings {
-  research_focus: string      // arXiv search query
-  research_idea: string       // research context for the analysis
-  focus_keywords: string[]
-  system_prompt: string       // analysis prompt override (empty = built-in)
+/** A research direction: its own arXiv query, research idea and analysis prompt. */
+export interface Direction {
+  id: number | null           // null until saved
+  name: string
   arxiv_categories: string[]
+  research_focus: string      // arXiv search query
+  focus_keywords: string[]
+  research_idea: string       // research context for the analysis
+  system_prompt: string       // persona/rubric override (empty = built-in)
+  _key?: string               // client-side identity (also for unsaved directions)
+}
+
+/** A direction with paper counts, for the home feed tabs. */
+export interface DirectionSummary {
+  id: number
+  name: string
+  focus_keywords: string[]
+  total: number
+  pending: number
+  processing: number
+  high: number
+}
+
+export interface AppSettings {
+  directions: Direction[]
   providers: Provider[]
   pipeline: PipelineConfig
   proxy_url: string
@@ -185,4 +206,44 @@ export interface ProgressStep {
   label: string
   status: 'pending' | 'active' | 'done' | 'skipped' | 'error'
   message?: string
+  startedAt?: number  // ms timestamp when the step became active (for the elapsed counter)
+}
+
+// --- Research-direction auto-fill agent ---
+
+export interface AutofillFields {
+  arxiv_categories: string[]
+  research_focus: string
+  research_idea: string
+  system_prompt: string
+}
+
+export interface AutofillRound {
+  round: number
+  query: string
+  research_focus: string
+  total: number
+  weekly: number
+  weekly_capped: boolean
+  precision: number | null
+  acceptable: boolean
+  assessment: string
+  samples?: Array<{ title: string; relevant: boolean }>
+  score: number
+}
+
+export interface AutofillResult {
+  fields: AutofillFields
+  best_round: number
+  acceptable: boolean
+  rounds: AutofillRound[]
+}
+
+export interface UsageTotals {
+  requests: number
+  prompt_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  completion_tokens: number
+  hit_rate: number | null
 }

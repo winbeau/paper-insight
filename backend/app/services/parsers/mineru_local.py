@@ -55,8 +55,9 @@ class MineruLocalParser:
         runtime = get_mineru_runtime()
         if not runtime.is_installed():
             raise PipelineError("config_error", "本地 MinerU 尚未安装，请在 设置 → 解析流程 中安装并拉取模型")
-        await progress("启动本地 MinerU 服务（首次加载模型可能需要几分钟）...")
-        return await runtime.ensure_server(self.config.tier), {}
+        if not runtime.server_ready_for(self.config.tier, self.config.concurrency):
+            await progress("启动本地 MinerU 服务（加载模型约需 20 秒）...")
+        return await runtime.ensure_server(self.config.tier, self.config.concurrency), {}
 
     async def parse(self, request: ParseRequest, progress: ProgressFn) -> ParsedDocument:
         base_url, headers = await self._base_url(progress)
@@ -67,7 +68,7 @@ class MineruLocalParser:
         if runtime:
             runtime.mark_busy(True)
         try:
-            await progress(f"本地 MinerU 解析中 (tier={self.config.tier})...")
+            await progress(f"本地 MinerU 解析中（{self.config.tier}）")
             return await self._parse_with(base_url, headers, request, progress)
         except httpx.ConnectError as e:
             raise parse_error(f"无法连接本地 MinerU 服务 {base_url}: {e}")

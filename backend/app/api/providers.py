@@ -14,6 +14,7 @@ from app.models import AppSettings
 from app.schemas import Provider, load_settings, unmask_providers
 from app.services.errors import PipelineError
 from app.services.llm_client import chat_text, get_client, map_openai_error
+from app.services.usage import summary as usage_summary
 
 router = APIRouter()
 
@@ -78,3 +79,9 @@ async def list_models(body: ProviderRequest, session: Session = Depends(get_sess
     except Exception as e:
         return {"ok": False, "models": [], "error": map_openai_error(e, provider, "models").message}
     return {"ok": True, "models": models}
+
+
+@router.get("/usage")
+def get_usage():
+    """Token usage and prompt-cache hit rate, overall and per purpose (analysis, vision, …)."""
+    return usage_summary()

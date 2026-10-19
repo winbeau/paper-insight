@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
-from app.models import AppSettings
+from app.models import AppSettings, ResearchDirection
 
 MASK_PREFIX = "••••"
 
@@ -61,6 +61,9 @@ class MineruLocalConfig(BaseModel):
     source: Literal["huggingface", "modelscope"] = "huggingface"
     external_url: str = "http://127.0.0.1:8000"
     external_api_key: str = ""
+    # Documents MinerU parses at the same time (managed: also the server's --concurrency).
+    # More than 1 needs plenty of unified memory.
+    concurrency: int = Field(default=1, ge=1, le=4)
 
 
 class ParserConfig(BaseModel):
@@ -101,6 +104,31 @@ class PipelineConfig(BaseModel):
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
 
 
+# --- Research directions -------------------------------------------------------------
+
+
+class Direction(BaseModel):
+    id: Optional[int] = None  # None: created when the settings are saved
+    name: str = "研究方向"
+    arxiv_categories: List[str] = Field(default_factory=lambda: ["cs.CV", "cs.LG"])
+    research_focus: str = ""
+    focus_keywords: List[str] = Field(default_factory=list)
+    research_idea: str = ""
+    system_prompt: str = ""
+
+    @classmethod
+    def from_row(cls, row: ResearchDirection) -> "Direction":
+        return cls(
+            id=row.id,
+            name=row.name or "研究方向",
+            arxiv_categories=row.arxiv_categories or ["cs.CV", "cs.LG"],
+            research_focus=row.research_focus or "",
+            focus_keywords=row.focus_keywords or [],
+            research_idea=row.research_idea or "",
+            system_prompt=row.system_prompt or "",
+        )
+
+
 # --- Settings API ------------------------------------------------------------------
 
 
@@ -114,6 +142,7 @@ class AppSettingsRead(BaseModel):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     proxy_url: str = ""
     last_fetch_at: Optional[datetime] = None
+    directions: List[Direction] = Field(default_factory=list)
 
 
 class AppSettingsUpdate(BaseModel):
@@ -125,6 +154,7 @@ class AppSettingsUpdate(BaseModel):
     providers: Optional[List[Provider]] = None
     pipeline: Optional[PipelineConfig] = None
     proxy_url: Optional[str] = None
+    directions: Optional[List[Direction]] = None
 
 
 def load_settings(row: Optional[AppSettings]) -> AppSettingsRead:
