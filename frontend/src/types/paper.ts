@@ -247,3 +247,42 @@ export interface UsageTotals {
   completion_tokens: number
   hit_rate: number | null
 }
+
+// --- History management ---
+
+export interface HistoryItem {
+  id: number
+  arxiv_id: string
+  title: string
+  direction_id: number | null
+  direction_name: string
+  processing_status: string
+  relevance_score: number | null
+  created_at: string
+  published: string
+}
+
+export interface StorageUsage {
+  pdfs: number
+  parsed: number
+  thumbnails: number
+  total: number
+}
+
+export interface HistoryPage {
+  total: number
+  items: HistoryItem[]
+  storage: StorageUsage
+}
+
+export interface HistoryFilter {
+  direction_id?: number | null
+  status?: string | null
+  q?: string
+}
+
+export interface DeleteResult {
+  deleted: number
+  skipped_active: number
+  freed_bytes: number
+}

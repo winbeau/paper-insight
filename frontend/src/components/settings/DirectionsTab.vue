@@ -64,7 +64,7 @@ function runState(direction: Direction) {
 
 watch(activeKey, () => { confirmingDelete.value = false })
 
-// For the modal footer's "AI 帮我填写" button (acts on the selected direction)
+// For the modal footer's "Fill with AI" button (acts on the selected direction)
 const autofillStatus = computed(() => (active.value ? runState(active.value) : 'idle'))
 
 function openAutofill() {

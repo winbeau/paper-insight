@@ -202,6 +202,15 @@ export function useProcessingStore() {
       state.stopping = false
     },
 
+    /** Papers were deleted: drop them from the queue and forget their state. */
+    forget(paperIds: number[]) {
+      const gone = new Set(paperIds)
+      state.queue = state.queue.filter(id => !gone.has(id))
+      for (const id of paperIds) {
+        if (!state.running.includes(id)) delete state.runs[id]
+      }
+    },
+
     onPaperChanged(listener: (paperId: number) => void): () => void {
       changeListeners.add(listener)
       return () => changeListeners.delete(listener)
