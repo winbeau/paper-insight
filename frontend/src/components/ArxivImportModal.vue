@@ -2,8 +2,10 @@
 import { ref, computed } from 'vue'
 import { importPaper } from '../services/api'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
+  directionId: number | null
+  directionName?: string
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +34,7 @@ async function handleImport() {
   successResult.value = null
 
   try {
-    const result = await importPaper(arxivUrl.value.trim())
+    const result = await importPaper(arxivUrl.value.trim(), props.directionId)
     successResult.value = {
       title: result.title,
       arxivId: result.arxiv_id,
@@ -119,7 +121,9 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
               <div class="flex-1 min-w-0">
                 <h3 class="text-xl font-semibold text-gray-900 tracking-tight">Import from arXiv</h3>
-                <p class="text-sm text-gray-500 mt-0.5">Paste an arXiv link or ID to import a paper</p>
+                <p class="text-sm text-gray-500 mt-0.5">
+                  Paste an arXiv link or ID to import a paper<span v-if="directionName"> into <span class="font-medium text-gray-700">{{ directionName }}</span></span>
+                </p>
               </div>
               <button
                 class="flex-shrink-0 p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"

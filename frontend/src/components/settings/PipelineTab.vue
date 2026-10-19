@@ -102,6 +102,13 @@ const labelClass = 'text-[11px] font-medium text-gray-500 uppercase tracking-wid
             </select>
           </label>
         </div>
+        <label class="block">
+          <span :class="labelClass">并行解析数</span>
+          <div class="mt-1 flex items-center gap-3">
+            <input v-model.number="settings.pipeline.parser.local.concurrency" type="number" min="1" max="4" :class="[inputClass, 'w-24']" />
+            <span class="text-xs text-gray-500">MinerU 同时解析的论文数。解析会在批量处理开始时提前排队，与图像识别 / 推理并行；大于 1 需要较多内存（建议 32 GB 以上）。</span>
+          </div>
+        </label>
         <MineruLocalPanel v-if="settings.pipeline.parser.local.mode === 'managed'" :config="settings.pipeline.parser.local" />
         <div v-else class="grid grid-cols-2 gap-3">
           <label class="block">

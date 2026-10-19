@@ -9,6 +9,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -16,18 +17,21 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from sqlalchemy import text
+from sqlmodel import select
 
 from app.config import parsed_dir_for
 from app.database import engine, get_sync_session
 from app.logging_config import get_logger
-from app.models import AppSettings, LLMAnalysis, Paper
+from app.models import AppSettings, LLMAnalysis, Paper, ResearchDirection
 from app.prompts import build_analysis_messages
 from app.schemas import AppSettingsRead, ModelRef, Provider, get_provider, load_settings
 from app.services.errors import PipelineError
 from app.services.llm_client import stream_chat
-from app.services.parsers import ParseRequest, parse_document, validate_parser_config
+from app.services.parse_queue import ParseTarget, get_parse_queue
+from app.services.parsers import validate_parser_config
 from app.services.parsers.base import ProgressFn, load_cached
 from app.services.pdf_renderer import ensure_pdf, generate_thumbnail
+from app.services.usage import usage_scope
 from app.services.vision import build_visual_evidence, select_figures
 
 logger = get_logger("services.analyzer")
@@ -143,7 +147,7 @@ def _extract_json(answer: str) -> Optional[Dict[str, Any]]:
         candidates.append(answer[start:end + 1])
     for candidate in candidates:
         try:
-            data = json.loads(candidate.strip())
+            data = json.loads(candidate.strip(), strict=False)
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(data, dict):
@@ -254,7 +258,40 @@ async def _with_progress(
                 await task
 
 
+# Figure descriptions don't depend on the research direction: one vision run per paper
+# (and per vision model) serves every direction the paper appears in.
+_vision_locks: Dict[str, asyncio.Lock] = {}
+
+
+async def _cached_visual_evidence(
+    doc, figures, provider: Provider, config, paper: PaperSnapshot, progress: ProgressFn
+) -> tuple[str, bool]:
+    key_source = json.dumps(
+        [provider.base_url, config.model, [f.path for f in figures]], ensure_ascii=False
+    )
+    cache_file = doc.root / f"vision-{hashlib.sha1(key_source.encode()).hexdigest()[:12]}.md"
+    lock = _vision_locks.setdefault(paper.arxiv_id, asyncio.Lock())
+    async with lock:
+        if cache_file.exists():
+            return cache_file.read_text(encoding="utf-8"), True
+        evidence = await build_visual_evidence(
+            doc, figures, provider, config, paper.title, progress, paper.abstract
+        )
+        if evidence:
+            with contextlib.suppress(OSError):
+                cache_file.write_text(evidence, encoding="utf-8")
+        return evidence, False
+
+
 async def run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> AsyncIterator[PipelineEvent]:
+    with usage_scope() as usage:
+        async for event in _run_pipeline(paper, settings):
+            if event.type == "step_finished" and event.step == "finalize" and usage.hit_rate is not None:
+                event.message += f" · 缓存命中 {usage.hit_rate:.0%}"
+            yield event
+
+
+async def _run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> AsyncIterator[PipelineEvent]:
     pipeline = settings.pipeline
     reasoning_provider = _require_provider(settings, pipeline.reasoning, "推理模型")
     if not load_cached(parsed_dir_for(paper.arxiv_id)):
@@ -281,19 +318,15 @@ async def run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> Async
         "step_finished", "download", message=f"PDF {pdf_path.stat().st_size / 1024 / 1024:.1f} MB"
     )
 
-    # 2. Parse
+    # 2. Parse (through the shared queue: may already be done or under way via prefetch)
     engine_label = ENGINE_LABELS.get(pipeline.parser.engine, pipeline.parser.engine)
-    yield PipelineEvent("step_started", "parse", message=f"{engine_label} 解析中...")
-    request = ParseRequest(
-        arxiv_id=paper.arxiv_id,
-        title=paper.title,
-        pdf_url=paper.pdf_url,
-        pdf_path=pdf_path,
-        out_dir=parsed_dir_for(paper.arxiv_id),
-    )
+    yield PipelineEvent("step_started", "parse", message=engine_label)
+    target = ParseTarget(arxiv_id=paper.arxiv_id, title=paper.title, pdf_url=paper.pdf_url)
     parsed_holder: list = []
     async with contextlib.aclosing(_with_progress(
-        "parse", lambda progress: parse_document(pipeline.parser, request, progress), parsed_holder
+        "parse",
+        lambda progress: get_parse_queue().parse(target, pipeline.parser, progress),
+        parsed_holder,
     )) as events:
         async for event in events:
             yield event
@@ -321,16 +354,18 @@ async def run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> Async
         evidence_holder: list = []
         async with contextlib.aclosing(_with_progress(
             "vision",
-            lambda progress: build_visual_evidence(
-                doc, figures, vision_provider, pipeline.vision, paper.title, progress
+            lambda progress: _cached_visual_evidence(
+                doc, figures, vision_provider, pipeline.vision, paper, progress
             ),
             evidence_holder,
         )) as events:
             async for event in events:
                 yield event
-        visual_evidence = evidence_holder[0]
-        count = visual_evidence.count("\n") + 1 if visual_evidence else 0
-        yield PipelineEvent("step_finished", "vision", message=f"{count} 条视觉证据")
+        visual_evidence, from_cache = evidence_holder[0]
+        count = sum(1 for line in visual_evidence.splitlines() if line.startswith("["))
+        yield PipelineEvent(
+            "step_finished", "vision", message=f"{count} 条视觉证据{'（缓存）' if from_cache else ''}"
+        )
 
     # 4. Analyze (streamed)
     reasoning = pipeline.reasoning
@@ -355,6 +390,7 @@ async def run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> Async
         temperature=reasoning.temperature,
         max_tokens=reasoning.max_tokens,
         json_mode=reasoning_provider.json_mode,
+        purpose="analysis",
     )) as chunks:
         async for kind, chunk in chunks:
             if kind == "thinking":
@@ -375,12 +411,44 @@ async def run_pipeline(paper: PaperSnapshot, settings: AppSettingsRead) -> Async
 
 # --- DB state around a run -------------------------------------------------------------
 
-# Papers with a live run in this process (the app is a single process)
+# Papers with a live run in this process (the app is a single process), with the task
+# driving each run so "stop all" can cancel it.
 _active: set[int] = set()
+_tasks: Dict[int, asyncio.Task] = {}
+_stopped: set[int] = set()
+_generation = 0  # bumped by stop_all; batches compare it to stop starting new papers
+
+STOPPED_MESSAGE = "已手动停止"
 
 
 def active_paper_ids() -> List[int]:
     return list(_active)
+
+
+def current_generation() -> int:
+    return _generation
+
+
+async def stop_all() -> Dict[str, int]:
+    """Stop every running analysis, drop queued parses and stop the local MinerU server.
+
+    Stopped papers go back to 'pending' (not 'failed').
+    """
+    global _generation
+    _generation += 1
+    paper_ids = list(_tasks)
+    _stopped.update(paper_ids)
+    for paper_id in paper_ids:
+        task = _tasks.get(paper_id)
+        if task is not None and not task.done():
+            task.cancel()
+    parses = get_parse_queue().cancel_all()
+
+    from app.services.mineru_runtime import get_mineru_runtime
+
+    await get_mineru_runtime().stop_server()  # in-flight local parses really stop
+    logger.info("Stopped %d analyses and %d parses", len(paper_ids), parses)
+    return {"stopped": len(paper_ids), "parses_cancelled": parses}
 
 
 
@@ -406,6 +474,17 @@ def mark_failed(paper_id: int, code: str, message: str) -> None:
                 "WHERE id = :id AND processing_status = 'processing'"
             ),
             {"id": paper_id, "error": f"{code}: {message}"[:2000]},
+        )
+
+
+def release_to_pending(paper_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE paper SET processing_status = 'pending', processing_error = NULL "
+                "WHERE id = :id AND processing_status = 'processing'"
+            ),
+            {"id": paper_id},
         )
 
 
@@ -444,7 +523,20 @@ def _load(paper_id: int) -> tuple[PaperSnapshot, AppSettingsRead]:
             pdf_url=paper.pdf_url,
             thumbnail_url=paper.thumbnail_url,
         )
-        return snapshot, load_settings(session.get(AppSettings, 1))
+        settings = load_settings(session.get(AppSettings, 1))
+        # Analyze against the paper's own research direction (idea, prompt, keywords)
+        direction = session.get(ResearchDirection, paper.direction_id) if paper.direction_id else None
+        if direction is None:
+            direction = session.exec(
+                select(ResearchDirection).order_by(ResearchDirection.position, ResearchDirection.id)
+            ).first()
+        if direction is not None:
+            settings = settings.model_copy(update={
+                "research_idea": direction.research_idea or "",
+                "system_prompt": direction.system_prompt or "",
+                "research_focus": direction.research_focus or "",
+            })
+        return snapshot, settings
 
 
 def reasoning_configured() -> bool:
@@ -466,6 +558,9 @@ async def process_paper(paper_id: int) -> AsyncIterator[PipelineEvent]:
         raise PipelineError("busy", "该论文正在分析中")
 
     _active.add(paper_id)
+    task = asyncio.current_task()
+    if task is not None:
+        _tasks[paper_id] = task
     failure = ("interrupted", "分析被中断")
     succeeded = False
     try:
@@ -475,6 +570,14 @@ async def process_paper(paper_id: int) -> AsyncIterator[PipelineEvent]:
                     save_result(paper_id, event.result, event.thumbnail_url)
                     succeeded = True
                 yield event
+    except asyncio.CancelledError:
+        if paper_id not in _stopped:
+            raise  # client disconnect / shutdown: marked 'interrupted' below
+        # Our own stop_all: finish as a normal "stopped" error the caller can report
+        failure = ("stopped", STOPPED_MESSAGE)
+        if task is not None:
+            task.uncancel()
+        raise PipelineError("stopped", STOPPED_MESSAGE) from None
     except PipelineError as e:
         failure = (e.code, e.message)
         raise
@@ -483,9 +586,15 @@ async def process_paper(paper_id: int) -> AsyncIterator[PipelineEvent]:
         raise
     finally:
         _active.discard(paper_id)
+        _tasks.pop(paper_id, None)
+        _stopped.discard(paper_id)
         if not succeeded:
-            mark_failed(paper_id, *failure)
-            logger.warning("Paper %s failed: %s: %s", paper_id, *failure)
+            if failure[0] == "stopped":
+                release_to_pending(paper_id)
+                logger.info("Paper %s stopped", paper_id)
+            else:
+                mark_failed(paper_id, *failure)
+                logger.warning("Paper %s failed: %s: %s", paper_id, *failure)
 
 
 async def analyze_paper(paper_id: int) -> bool:
@@ -496,7 +605,7 @@ async def analyze_paper(paper_id: int) -> bool:
                 pass
         return True
     except PipelineError as e:
-        if e.code != "busy":
+        if e.code not in ("busy", "stopped"):
             logger.error("Paper %s analysis failed (%s): %s", paper_id, e.code, e.message)
         return False
     except Exception:

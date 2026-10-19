@@ -4,5 +4,24 @@ ARXIV_OPTIONS = [
     {"code": "cs.LG", "name": "Machine Learning", "desc": "Deep learning architectures, optimization, algorithms"},
     {"code": "cs.AI", "name": "Artificial Intelligence", "desc": "General AI, reasoning, cognitive modeling"},
     {"code": "cs.RO", "name": "Robotics", "desc": "Kinematics, dynamics, sensors, control"},
-    {"code": "cs.SD", "name": "Sound", "desc": "Audio processing, speech recognition"}
+    {"code": "cs.SD", "name": "Sound", "desc": "Audio processing, speech recognition"},
+    {"code": "cs.NE", "name": "Neural and Evolutionary Computing", "desc": "Neural networks, spiking models, evolutionary methods"},
+    {"code": "cs.IR", "name": "Information Retrieval", "desc": "Search, recommendation, retrieval-augmented systems"},
+    {"code": "cs.MM", "name": "Multimedia", "desc": "Video, multimodal content, streaming"},
+    {"code": "cs.GR", "name": "Graphics", "desc": "Rendering, 3D reconstruction, neural fields"},
+    {"code": "cs.HC", "name": "Human-Computer Interaction", "desc": "Interfaces, user studies, interactive systems"},
+    {"code": "cs.CR", "name": "Cryptography and Security", "desc": "Security, privacy, adversarial robustness"},
+    {"code": "cs.DC", "name": "Distributed Computing", "desc": "Parallel and distributed systems, training/inference infrastructure"},
+    {"code": "cs.AR", "name": "Hardware Architecture", "desc": "Accelerators, memory systems, hardware design"},
+    {"code": "cs.PF", "name": "Performance", "desc": "Performance modeling and evaluation"},
+    {"code": "cs.SE", "name": "Software Engineering", "desc": "Program synthesis, code models, tooling"},
+    {"code": "cs.MA", "name": "Multiagent Systems", "desc": "Agents, coordination, game-theoretic learning"},
+    {"code": "eess.IV", "name": "Image and Video Processing", "desc": "Imaging, compression, restoration"},
+    {"code": "eess.AS", "name": "Audio and Speech Processing", "desc": "Speech, music, acoustic signals"},
+    {"code": "eess.SP", "name": "Signal Processing", "desc": "Signal processing, communications, sensing"},
+    {"code": "stat.ML", "name": "Statistics - Machine Learning", "desc": "Statistical learning theory and methods"},
+    {"code": "math.OC", "name": "Optimization and Control", "desc": "Optimization algorithms, control theory"},
+    {"code": "q-bio.QM", "name": "Quantitative Methods (Biology)", "desc": "Computational biology, protein and molecule modeling"},
 ]
+
+ARXIV_CATEGORY_CODES = {option["code"] for option in ARXIV_OPTIONS}

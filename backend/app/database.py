@@ -1,7 +1,7 @@
 import os
 
 from sqlalchemy import event, inspect, text
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import SQLModel, Session, create_engine, select
 
 from app.config import DB_PATH
 
@@ -100,8 +100,22 @@ def ensure_paper_schema():
             "heuristic_suggestion": "TEXT",
             "processing_started_at": "DATETIME",
             "processing_error": "TEXT",
+            "direction_id": "INTEGER",
         },
     )
+
+    # Papers became unique per (arxiv_id, direction) instead of per arxiv_id
+    indexes = {ix["name"]: ix for ix in inspect(engine).get_indexes(table_name)}
+    with engine.begin() as conn:
+        if indexes.get("ix_paper_arxiv_id", {}).get("unique"):
+            conn.execute(text("DROP INDEX ix_paper_arxiv_id"))
+            conn.execute(text(f"CREATE INDEX ix_paper_arxiv_id ON {table_name} (arxiv_id)"))
+        if "ix_paper_direction_id" not in indexes:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_paper_direction_id ON {table_name} (direction_id)"))
+        if "ux_paper_arxiv_direction" not in indexes:
+            conn.execute(text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS ux_paper_arxiv_direction ON {table_name} (arxiv_id, direction_id)"
+            ))
 
     if "processing_status" in added:
         with engine.begin() as conn:
@@ -123,6 +137,41 @@ def ensure_paper_schema():
                     "AND processing_status = 'processed'"
                 )
             )
+
+
+def ensure_default_direction() -> int:
+    """Make sure at least one research direction exists and every paper belongs to one.
+
+    Upgrades move the single-direction research settings (stored on AppSettings) into the
+    first direction. Returns the id of the first direction.
+    """
+    from app.models import AppSettings, ResearchDirection
+
+    with Session(engine) as session:
+        first = session.exec(
+            select(ResearchDirection).order_by(ResearchDirection.position, ResearchDirection.id)
+        ).first()
+        if first is None:
+            legacy = session.get(AppSettings, 1)
+            first = ResearchDirection(
+                name="研究方向 1",
+                position=0,
+                research_focus=(legacy.research_focus if legacy else "") or "",
+                research_idea=(legacy.research_idea if legacy else "") or "",
+                focus_keywords=(legacy.focus_keywords if legacy else None) or [],
+                system_prompt=(legacy.system_prompt if legacy else "") or "",
+                arxiv_categories=(legacy.arxiv_categories if legacy else None) or ["cs.CV", "cs.LG"],
+            )
+            session.add(first)
+            session.commit()
+            session.refresh(first)
+        first_id = first.id
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE paper SET direction_id = :id WHERE direction_id IS NULL"), {"id": first_id}
+        )
+    return first_id
 
 
 def reset_interrupted_processing() -> int:

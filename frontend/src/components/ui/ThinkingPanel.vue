@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import type { StreamErrorEvent, ProgressStep } from '../../types/paper'
 
 const props = defineProps<{
@@ -34,6 +34,26 @@ const completedSteps = computed(() => {
 
 const activeStep = computed(() => {
   return props.steps.find(s => s.status === 'active' || s.status === 'error') ?? null
+})
+
+// Elapsed time of the active step (MinerU can take a minute without other feedback)
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | null = null
+watch(
+  () => props.isStreaming,
+  (streaming) => {
+    if (clock) clearInterval(clock)
+    clock = streaming ? setInterval(() => { now.value = Date.now() }, 1000) : null
+  },
+  { immediate: true },
+)
+onUnmounted(() => { if (clock) clearInterval(clock) })
+
+const activeElapsed = computed(() => {
+  const step = activeStep.value
+  if (!step?.startedAt || step.status !== 'active') return ''
+  const seconds = Math.max(0, Math.floor((now.value - step.startedAt) / 1000))
+  return seconds >= 60 ? `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`
 })
 
 // Auto-scroll to bottom when new content arrives
@@ -102,7 +122,7 @@ function toggleCollapse() {
 
       <!-- Current step detail -->
       <p v-if="activeStep?.message" class="mt-1.5 text-[10px] text-gray-500 truncate">
-        {{ activeStep.message }}
+        {{ activeStep.message }}<span v-if="activeElapsed" class="font-mono text-gray-400"> · {{ activeElapsed }}</span>
       </p>
 
       <!-- Progress Summary -->

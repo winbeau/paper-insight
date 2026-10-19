@@ -15,6 +15,7 @@ from app.middleware import LocalOnlyMiddleware, RequestLoggingMiddleware
 from app.database import (
     create_db_and_tables,
     ensure_appsettings_schema,
+    ensure_default_direction,
     ensure_paper_schema,
     get_sync_session,
     reset_interrupted_processing,
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     ensure_appsettings_schema()
     ensure_paper_schema()
+    ensure_default_direction()
     interrupted = reset_interrupted_processing()
     if interrupted:
         logger.warning("Marked %d interrupted papers as failed", interrupted)

@@ -1,18 +1,17 @@
-import { ref, computed, watch, onUnmounted, type Ref, type ComputedRef } from 'vue'
-import type { AnalysisResult, StreamErrorEvent, ProgressStep } from '../types/paper'
-import { processPaperStream, getStreamErrorMessage, parseStoredError } from '../services/api'
+import { computed, watch, onUnmounted, type Ref, type ComputedRef } from 'vue'
+import type { StreamErrorEvent, ProgressStep } from '../types/paper'
+import { getStreamErrorMessage, parseStoredError } from '../services/api'
+import { useProcessingStore } from '../stores/processing'
 
-// While a paper is analyzed elsewhere (scheduler, another card), poll until it finishes
+// While a paper is analyzed elsewhere (scheduler), poll until it finishes
 const BACKGROUND_POLL_MS = 5000
 
 export interface StreamProcessingState {
-  isStreaming: Ref<boolean>
-  isRetrying: Ref<boolean>
-  streamProgress: Ref<ProgressStep[]>
-  streamThought: Ref<string>
-  streamError: Ref<StreamErrorEvent | null>
-  streamResult: Ref<AnalysisResult | null>
-  localStatus: Ref<string | null>
+  isStreaming: ComputedRef<boolean>
+  isQueued: ComputedRef<boolean>
+  streamProgress: ComputedRef<ProgressStep[]>
+  streamThought: ComputedRef<string>
+  streamError: ComputedRef<StreamErrorEvent | null>
 }
 
 export interface StreamProcessingComputed {
@@ -28,25 +27,30 @@ export interface StreamProcessingHandlers {
   handleRetry: () => void
 }
 
+/**
+ * A paper card's view of its analysis. The run itself lives in the global processing
+ * store, so it keeps going when the card is unmounted (tab or filter switch).
+ */
 export function useStreamProcessing(
   paperId: Ref<number>,
+  directionId: Ref<number | null>,
   processingStatus: Ref<string>,
   processingError: Ref<string | null>,
   onRefresh: (paperId: number) => void
 ): StreamProcessingState & StreamProcessingComputed & StreamProcessingHandlers {
-  // State
-  const isStreaming = ref(false)
-  const isRetrying = ref(false)
-  const streamProgress = ref<ProgressStep[]>([])
-  const streamThought = ref('')
-  const streamError = ref<StreamErrorEvent | null>(null)
-  const streamResult = ref<AnalysisResult | null>(null)
-  const localStatus = ref<string | null>(null)
-  let streamAbortFn: (() => void) | null = null
-  let pollTimer: ReturnType<typeof setInterval> | null = null
+  const store = useProcessingStore()
+  const paperRun = computed(() => store.state.runs[paperId.value])
 
-  // Computed
-  const statusValue = computed(() => localStatus.value ?? processingStatus.value)
+  const isStreaming = computed(() => paperRun.value?.isStreaming ?? false)
+  const isQueued = computed(() => store.state.queue.includes(paperId.value))
+  const streamProgress = computed(() => paperRun.value?.progress ?? [])
+  const streamThought = computed(() => paperRun.value?.thought ?? '')
+  const streamError = computed(() => paperRun.value?.error ?? null)
+
+  const statusValue = computed(() => {
+    if (isStreaming.value) return 'processing'
+    return paperRun.value?.localStatus ?? processingStatus.value
+  })
   const isProcessing = computed(() => statusValue.value === 'processing')
   const isFailed = computed(() => statusValue.value === 'failed')
 
@@ -58,10 +62,9 @@ export function useStreamProcessing(
   })
 
   const statusLabel = computed(() => {
-    if (isStreaming.value) {
-      const active = streamProgress.value.find(s => s.status === 'active')
-      return active?.message || active?.label || '分析中...'
-    }
+    // Step details live in the progress panel; don't repeat them here
+    if (isStreaming.value) return '分析中...'
+    if (isQueued.value) return '排队等待分析'
     if (statusValue.value === 'processing') return '后台分析中...'
     if (statusValue.value === 'failed') {
       return displayError.value ? getStreamErrorMessage(displayError.value) : '分析失败'
@@ -71,130 +74,56 @@ export function useStreamProcessing(
 
   const statusTag = computed(() => {
     if (isStreaming.value) return 'streaming'
+    if (isQueued.value) return 'queued'
     if (statusValue.value === 'processing') return 'processing'
     if (statusValue.value === 'failed') return 'failed'
     return 'pending'
   })
 
-  // Poll the paper while someone else is processing it, so the card updates when done
+  // Poll the paper while the backend processes it without a stream of ours
+  let pollTimer: ReturnType<typeof setInterval> | null = null
   function stopPolling() {
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
     }
   }
-
   watch(
     () => isProcessing.value && !isStreaming.value,
     (backgroundRun) => {
       stopPolling()
-      if (backgroundRun) {
-        pollTimer = setInterval(() => onRefresh(paperId.value), BACKGROUND_POLL_MS)
-      }
+      if (backgroundRun) pollTimer = setInterval(() => onRefresh(paperId.value), BACKGROUND_POLL_MS)
     },
     { immediate: true }
   )
 
-  // A refreshed paper status supersedes the local one (e.g. background run finished)
-  watch(
-    () => processingStatus.value,
-    (newStatus, oldStatus) => {
-      if (isStreaming.value) return
-      if (localStatus.value === 'processing' && newStatus !== 'processing') localStatus.value = null
-      if (newStatus !== 'processing' && oldStatus === 'processing') streamProgress.value = []
-    }
-  )
-
-  function updateStep(key: string, status: ProgressStep['status'], message?: string) {
-    streamProgress.value = streamProgress.value.map(step =>
-      step.key === key
-        ? { ...step, status, message: message || step.message }
-        : step
-    )
-  }
-
-  async function handleRetry() {
-    // Allow retry even if DB status is "processing" (the backend answers 'busy' if it really is)
-    if (isRetrying.value || isStreaming.value) return
-
-    isRetrying.value = true
-    isStreaming.value = true
-    localStatus.value = 'processing'
-    streamProgress.value = []
-    streamThought.value = ''
-    streamError.value = null
-    streamResult.value = null
-
-    const { abort } = processPaperStream(paperId.value, {
-      onStarted: (event) => {
-        streamProgress.value = event.steps.map(step => ({ ...step, status: 'pending' as const }))
-      },
-      onProgress: (event) => {
-        if (event.status === 'step_started') updateStep(event.step, 'active', event.message)
-        else if (event.status === 'step_progress') updateStep(event.step, 'active', event.message)
-        else if (event.status === 'step_finished') updateStep(event.step, 'done', event.message)
-        else if (event.status === 'step_skipped') updateStep(event.step, 'skipped', event.message)
-      },
-      onThinking: (_chunk, accumulated) => {
-        streamThought.value = accumulated
-      },
-      onResult: (result) => {
-        streamResult.value = result
-        streamProgress.value = streamProgress.value.map(s =>
-          s.status === 'skipped' ? s : { ...s, status: 'done' as const }
-        )
-      },
-      onError: (error) => {
-        isStreaming.value = false
-        isRetrying.value = false
-        if (error.error === 'busy') {
-          // Someone else owns this run: show it as processing and poll for the outcome
-          streamProgress.value = []
-          localStatus.value = 'processing'
-          return
-        }
-        streamError.value = error
-        streamProgress.value = streamProgress.value.map(s =>
-          s.status === 'active' ? { ...s, status: 'error' as const } : s
-        )
-        localStatus.value = 'failed'
-      },
-      onDone: () => {
-        isStreaming.value = false
-        isRetrying.value = false
-        localStatus.value = null
-        onRefresh(paperId.value)
-      },
-    })
-
-    streamAbortFn = abort
-  }
-
-  onUnmounted(() => {
-    stopPolling()
-    if (streamAbortFn) {
-      streamAbortFn()
-      streamAbortFn = null
+  // A refreshed status from the server supersedes a stale local one
+  watch(processingStatus, (newStatus) => {
+    const r = paperRun.value
+    if (r && !r.isStreaming && r.localStatus === 'processing' && newStatus !== 'processing') {
+      r.localStatus = null
+      r.progress = []
     }
   })
 
+  function handleRetry() {
+    store.analyzeNow(paperId.value, directionId.value)
+  }
+
+  onUnmounted(stopPolling)
+
   return {
-    // State
     isStreaming,
-    isRetrying,
+    isQueued,
     streamProgress,
     streamThought,
     streamError,
-    streamResult,
-    localStatus,
-    // Computed
     statusValue,
     isProcessing,
     isFailed,
     displayError,
     statusLabel,
     statusTag,
-    // Handlers
     handleRetry,
   }
 }

@@ -1,30 +1,51 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
-import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings, fetchPaper } from './services/api'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import type { Paper, Stats, FilterType, StatusFilter, AppSettings, DirectionSummary } from './types/paper'
+import {
+  fetchPapers,
+  fetchStats,
+  fetchPapersStream,
+  fetchPendingPaperIds,
+  fetchSettings,
+  fetchPaper,
+  fetchDirections,
+} from './services/api'
+import { useProcessingStore } from './stores/processing'
 import { getLogger } from './utils/logger'
 import { analysisSetupProblem } from './utils/settings'
-
-const logger = getLogger('App')
 import AppSidebar from './components/layout/AppSidebar.vue'
+import DirectionTabs from './components/layout/DirectionTabs.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 import ArxivImportModal from './components/ArxivImportModal.vue'
+
+const logger = getLogger('App')
+const ACTIVE_DIRECTION_KEY = 'paperinsight.activeDirection'
+
+const processing = useProcessingStore()
 
 const papers = ref<Paper[]>([])
 const stats = ref<Stats | null>(null)
 const settings = ref<AppSettings | null>(null)
+const directions = ref<DirectionSummary[]>([])
+const activeDirectionId = ref<number | null>(readStoredDirection())
 const loading = ref(false)
 const fetching = ref(false)
-const batchProcessing = ref(false)
 const error = ref<string | null>(null)
 const showImportModal = ref(false)
 
-// Batch processing queue state
-const MAX_CONCURRENT = 3
-const processingQueue = ref<number[]>([])  // Queue of paper IDs waiting to process
-const processingPaperIds = ref<Set<number>>(new Set())  // Currently processing paper IDs
-
 const sidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null)
+
+const activeDirection = computed(() =>
+  directions.value.find(d => d.id === activeDirectionId.value) ?? null
+)
+
+// Anything being analyzed: our queue, or the backend scheduler (any direction)
+const processingActive = computed(() =>
+  processing.state.running.length > 0
+  || processing.state.queue.length > 0
+  || directions.value.some(d => d.processing > 0)
+)
+const busyDirectionIds = computed(() => processing.activeDirections())
 
 // First-run hint: analysis needs a reasoning model with an API key
 const setupProblem = computed(() => analysisSetupProblem(settings.value))
@@ -32,17 +53,10 @@ const setupProblem = computed(() => analysisSetupProblem(settings.value))
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
 
-const focusKeywords = computed(() => {
-  if (!settings.value) return []
-  if (settings.value.focus_keywords && settings.value.focus_keywords.length > 0) {
-    return settings.value.focus_keywords
-  }
-  if (!settings.value.research_focus) return []
-  return settings.value.research_focus
-    .split(/[;]+/)
-    .map((keyword) => keyword.trim())
-    .filter(Boolean)
-})
+const MAX_KEYWORD_CHIPS = 12
+const allFocusKeywords = computed(() => activeDirection.value?.focus_keywords ?? [])
+const focusKeywords = computed(() => allFocusKeywords.value.slice(0, MAX_KEYWORD_CHIPS))
+const hiddenKeywordCount = computed(() => Math.max(0, allFocusKeywords.value.length - MAX_KEYWORD_CHIPS))
 
 const filteredPapers = computed(() => {
   let result = papers.value
@@ -66,19 +80,44 @@ const filteredPapers = computed(() => {
   return result
 })
 
+function readStoredDirection(): number | null {
+  try {
+    const value = Number(localStorage.getItem(ACTIVE_DIRECTION_KEY))
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+watch(activeDirectionId, (id) => {
+  try {
+    if (id != null) localStorage.setItem(ACTIVE_DIRECTION_KEY, String(id))
+  } catch {
+    // storage unavailable: just don't remember the tab
+  }
+})
+
+async function loadDirections() {
+  directions.value = await fetchDirections()
+  if (!directions.value.some(d => d.id === activeDirectionId.value)) {
+    activeDirectionId.value = directions.value[0]?.id ?? null
+  }
+}
+
 async function loadData() {
-  loading.value = true
+  loading.value = papers.value.length === 0
   error.value = null
 
   try {
-    const [papersData, statsData, settingsData] = await Promise.all([
-      fetchPapers({ limit: 100 }),
-      fetchStats(),
-      fetchSettings(), // Fetch settings
+    const [settingsData] = await Promise.all([fetchSettings(), loadDirections()])
+    settings.value = settingsData
+    const directionId = activeDirectionId.value ?? undefined
+    const [papersData, statsData] = await Promise.all([
+      fetchPapers({ limit: 100, direction_id: directionId }),
+      fetchStats(directionId),
     ])
     papers.value = papersData
     stats.value = statsData
-    settings.value = settingsData // Update settings ref
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load data'
     logger.error('Failed to load data', e)
@@ -87,8 +126,19 @@ async function loadData() {
   }
 }
 
+function selectDirection(id: number) {
+  if (id === activeDirectionId.value) return
+  activeDirectionId.value = id
+  papers.value = []
+  loadData()
+}
+
+function addDirection() {
+  sidebarRef.value?.openSettings('research', { newDirection: true })
+}
+
 async function handleFetch() {
-  if (fetching.value || batchProcessing.value) return
+  if (fetching.value) return
 
   fetching.value = true
   error.value = null
@@ -97,116 +147,52 @@ async function handleFetch() {
     onDone: async (event) => {
       fetching.value = false
       await loadData()
-
-      // Auto-trigger batch processing if there are new papers to process
-      if (event.saved > 0) {
-        // Small delay to ensure UI updates before batch starts
-        setTimeout(() => {
-          handleBatchProcess()
-        }, 500)
-      }
+      // Analyze what was just fetched
+      if (event.saved > 0) handleBatchProcess()
     },
     onError: (err) => {
       error.value = err.message || 'Failed to fetch papers'
       fetching.value = false
     },
-  })
+  }, activeDirectionId.value)
 }
 
 async function handleBatchProcess() {
-  if (batchProcessing.value) return
-
-  batchProcessing.value = true
   error.value = null
-
   try {
-    // Fetch all pending paper IDs
-    const pendingIds = await fetchPendingPaperIds()
-
-    if (pendingIds.length === 0) {
-      batchProcessing.value = false
-      return
-    }
-
-    // Initialize queue with all pending papers
-    processingQueue.value = [...pendingIds]
-    processingPaperIds.value = new Set()
-
-    // Start processing up to MAX_CONCURRENT papers
-    startNextBatch()
+    // Queue this direction's pending papers; the global queue shares its slots with
+    // the other directions and starts MinerU on all of them right away
+    const pendingIds = await fetchPendingPaperIds(activeDirectionId.value)
+    processing.enqueue(pendingIds, activeDirectionId.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to start batch processing'
-    batchProcessing.value = false
   }
 }
 
-function startNextBatch() {
-  // Fill up to MAX_CONCURRENT processing slots
-  while (
-    processingPaperIds.value.size < MAX_CONCURRENT &&
-    processingQueue.value.length > 0
-  ) {
-    const nextId = processingQueue.value.shift()!
-    processingPaperIds.value = new Set([...processingPaperIds.value, nextId])
-  }
-
-  // If nothing is processing, batch is complete
-  if (processingPaperIds.value.size === 0) {
-    batchProcessing.value = false
-    loadData()
-  }
-}
-
-function handleProcessingDone(paperId: number, _success: boolean) {
-  // Remove from processing set
-  const newSet = new Set(processingPaperIds.value)
-  newSet.delete(paperId)
-  processingPaperIds.value = newSet
-
-  // Start next paper in queue IMMEDIATELY
-  // Note: loadData() is already called by the PaperCard's @refresh event
-  startNextBatch()
-}
-
-onMounted(async () => {
+async function handleStopAll() {
+  await processing.stopAll()
   await loadData()
-
-  // Auto-recover stuck papers: if any papers have processing_status === "processing"
-  // but we have no active streams, trigger batch processing to reset and reprocess them.
-  // The backend /papers/pending endpoint will reset stuck papers to "pending".
-  const stuckPapers = papers.value.filter(
-    p => p.processing_status === 'processing' && !p.is_processed
-  )
-  if (stuckPapers.length > 0 && !batchProcessing.value) {
-    logger.info(`Auto-recovery: found ${stuckPapers.length} stuck papers, triggering batch process`)
-    setTimeout(() => handleBatchProcess(), 500)
-  }
-})
+}
 
 function handleSettingsSaved() {
-  loadData() // Reload all data including papers and settings
+  loadData() // Reload everything: directions may have been added, renamed or removed
 }
 
 function handlePaperDeleted(paperId: number) {
-  // Remove paper from list immediately for hot reload
   papers.value = papers.value.filter(p => p.id !== paperId)
-  // Update stats
   if (stats.value) {
     stats.value.total_papers = Math.max(0, stats.value.total_papers - 1)
   }
+  loadDirections()
 }
 
-// Hot reload: update a single paper in place without reordering the list
+// Update a single paper in place (keeps the list order) plus the counters
 async function updatePaperById(paperId: number) {
   try {
     const updatedPaper = await fetchPaper(paperId)
     const index = papers.value.findIndex(p => p.id === paperId)
-    if (index !== -1) {
-      // Update paper in place, preserving list order
-      papers.value[index] = updatedPaper
-    }
-    // Also update stats since paper is now processed
-    const newStats = await fetchStats()
+    if (index !== -1) papers.value[index] = updatedPaper
+    const [newStats] = await Promise.all([fetchStats(activeDirectionId.value), loadDirections()])
     stats.value = newStats
   } catch (e) {
     logger.error('Failed to update paper', e)
@@ -214,18 +200,18 @@ async function updatePaperById(paperId: number) {
 }
 
 async function handlePaperImported(paperId: number, isNew: boolean) {
-  // Reload data to show the new paper
   await loadData()
-
-  // If it's a new paper, trigger batch processing to analyze it
-  if (isNew) {
-    // Add the paper to the processing queue
-    processingQueue.value = [paperId]
-    processingPaperIds.value = new Set()
-    batchProcessing.value = true
-    startNextBatch()
-  }
+  if (isNew) processing.analyzeNow(paperId, activeDirectionId.value)
 }
+
+// Runs finish independently of the cards (other tabs included): refresh what's shown
+const stopListening = processing.onPaperChanged((paperId) => {
+  if (papers.value.some(p => p.id === paperId)) updatePaperById(paperId)
+  else loadDirections()
+})
+
+onMounted(loadData)
+onUnmounted(stopListening)
 </script>
 
 <template>
@@ -238,11 +224,15 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
       :relevance-filter="relevanceFilter"
       :status-filter="statusFilter"
       :loading="fetching"
-      :batch-processing="batchProcessing"
+      :batch-processing="processingActive"
+      :processing-active="processingActive"
+      :stopping="processing.state.stopping"
+      :active-direction-id="activeDirectionId"
       @update:relevance-filter="relevanceFilter = $event"
       @update:status-filter="statusFilter = $event"
       @fetch="handleFetch"
       @batch-process="handleBatchProcess"
+      @stop-processing="handleStopAll"
       @import="showImportModal = true"
       @settings-saved="handleSettingsSaved"
     />
@@ -251,10 +241,20 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
     <main class="flex-1 min-w-0">
       <!-- Header -->
       <header class="sticky top-0 z-10 bg-[var(--color-paper-50)]/80 backdrop-blur-sm border-b border-[var(--color-paper-200)] px-8 py-4">
+        <!-- One tab per research direction (mirrors Settings → 研究方向) -->
+        <DirectionTabs
+          v-if="directions.length"
+          class="mb-3"
+          :directions="directions"
+          :active-id="activeDirectionId"
+          :busy-ids="busyDirectionIds"
+          @select="selectDirection"
+          @add="addDirection"
+        />
         <div class="flex items-center justify-between">
           <div>
             <h2 class="font-display text-xl font-semibold text-[var(--color-ink-900)]">
-              Research Feed
+              {{ activeDirection?.name ?? 'Research Feed' }}
             </h2>
             <p class="text-sm text-[var(--color-ink-400)]">
               {{ filteredPapers.length }} papers
@@ -292,6 +292,9 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
               class="px-2.5 py-1 rounded-md bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] text-xs text-[var(--color-ink-700)] font-mono shadow-sm"
             >
               {{ keyword }}
+            </span>
+            <span v-if="hiddenKeywordCount" class="px-2 py-1 text-xs text-[var(--color-ink-400)]">
+              +{{ hiddenKeywordCount }}
             </span>
           </div>
           <span v-else class="text-xs text-[var(--color-ink-400)] italic">
@@ -373,12 +376,10 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
             v-for="paper in filteredPapers"
             :key="paper.id"
             :paper="paper"
-            :auto-process="processingPaperIds.has(paper.id)"
             class="animate-slide-up"
             :style="{ animationDelay: `${filteredPapers.indexOf(paper) * 50}ms` }"
             @refresh="updatePaperById"
             @delete="handlePaperDeleted"
-            @processing-done="handleProcessingDone"
           />
         </div>
       </div>
@@ -387,6 +388,8 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
     <!-- Import Modal -->
     <ArxivImportModal
       :show="showImportModal"
+      :direction-id="activeDirectionId"
+      :direction-name="activeDirection?.name"
       @close="showImportModal = false"
       @imported="handlePaperImported"
     />

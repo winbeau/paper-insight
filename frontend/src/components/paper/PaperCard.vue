@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, toRef, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, toRef, onMounted, onUnmounted } from 'vue'
 import type { Paper } from '../../types/paper'
 import RelevanceBadge from '../ui/RelevanceBadge.vue'
 import AnalysisBox from '../ui/AnalysisBox.vue'
@@ -17,13 +17,11 @@ const logger = getLogger('PaperCard')
 
 const props = defineProps<{
   paper: Paper
-  autoProcess?: boolean  // When true, automatically start processing
 }>()
 
 const emit = defineEmits<{
   refresh: [id: number]
   delete: [id: number]
-  'processing-done': [id: number, success: boolean]  // Emitted when auto-processing completes
 }>()
 
 // Card expansion state
@@ -50,9 +48,10 @@ const {
 } = useThumbnailPreview(thumbnailUrl, abstractRef)
 
 // Stream processing composable
+// The analysis runs in the global processing store; the card only shows it
 const {
   isStreaming,
-  isRetrying,
+  isQueued,
   streamProgress,
   streamThought,
   streamError,
@@ -63,30 +62,11 @@ const {
   handleRetry,
 } = useStreamProcessing(
   toRef(() => props.paper.id),
+  toRef(() => props.paper.direction_id),
   toRef(() => props.paper.processing_status),
   toRef(() => props.paper.processing_error),
   (paperId) => emit('refresh', paperId)
 )
-
-// Auto-process when autoProcess prop becomes true
-watch(
-  () => props.autoProcess,
-  (shouldProcess) => {
-    if (shouldProcess && !props.paper.is_processed && !isStreaming.value && !isRetrying.value) {
-      handleRetry()
-    }
-  },
-  { immediate: true }
-)
-
-// Emit processing-done when streaming completes (for batch processing coordination)
-watch(isStreaming, (streaming, wasStreaming) => {
-  if (wasStreaming && !streaming && props.autoProcess) {
-    // Stream just finished, emit completion status
-    const success = !streamError.value && !isFailed.value
-    emit('processing-done', props.paper.id, success)
-  }
-})
 
 // Computed helpers
 const formattedDate = computed(() => {
@@ -182,7 +162,7 @@ function toggleExpand() {
       :position="contextMenuPosition"
       :is-processed="paper.is_processed"
       :is-streaming="isStreaming"
-      :is-retrying="isRetrying"
+      :is-retrying="isQueued"
       :is-deleting="isDeleting"
       @retry="handleRetry"
       @delete="handleDeleteRequest"
@@ -347,24 +327,24 @@ function toggleExpand() {
             v-if="isFailed && !isStreaming"
             class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"
             @click.stop="handleRetry"
-            :disabled="isRetrying"
+            :disabled="isQueued"
           >
-            {{ isRetrying ? 'retrying' : 'retry' }}
+            {{ isQueued ? 'queued' : 'retry' }}
           </button>
           <!-- Resume button for stuck "processing" papers (no active stream after page refresh) -->
           <button
             v-if="isProcessing && !isStreaming"
             class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors"
             @click.stop="handleRetry"
-            :disabled="isRetrying"
+            :disabled="isQueued"
           >
-            {{ isRetrying ? 'resuming' : 'resume' }}
+            {{ isQueued ? 'queued' : 'resume' }}
           </button>
           <button
-            v-if="!isFailed && !isStreaming && !isProcessing"
+            v-if="!isFailed && !isStreaming && !isProcessing && !isQueued"
             class="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider text-[var(--color-ink-700)] bg-[var(--color-paper-100)] border border-[var(--color-paper-300)] hover:bg-[var(--color-paper-50)] transition-colors"
             @click.stop="handleRetry"
-            :disabled="isRetrying"
+            :disabled="isQueued"
           >
             analyze
           </button>

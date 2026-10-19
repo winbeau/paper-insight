@@ -12,7 +12,7 @@ ROOT = Path(SPECPATH).parent
 BACKEND = ROOT / "backend"
 DIST = ROOT / "frontend" / "dist"
 ICON = ROOT / "packaging" / "build" / "PaperInsight.icns"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 if not (DIST / "index.html").exists():
     raise SystemExit("frontend/dist is missing: run `pnpm -C frontend build` first")

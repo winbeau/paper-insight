@@ -124,3 +124,12 @@ def test_local_provider_needs_no_key():
 
     assert not Provider(base_url="http://localhost:11434/v1").needs_api_key
     assert Provider(base_url="https://api.deepseek.com").needs_api_key
+
+
+def test_focus_keywords_skip_excluded_terms():
+    from app.api.settings import derive_focus_keywords
+
+    keywords = derive_focus_keywords(
+        '(ti:grasp OR abs:"grasp pose") AND abs:"RGB-D" ANDNOT (abs:garment OR abs:cloth) ANDNOT abs:deformable'
+    )
+    assert keywords == ["grasp", "grasp pose", "RGB-D"]

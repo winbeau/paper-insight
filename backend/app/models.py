@@ -1,14 +1,40 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from sqlmodel import SQLModel, Field, Column, Text
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Index
 from pydantic import BaseModel
 
 
-class Paper(SQLModel, table=True):
-    """Paper model for storing arXiv papers with AI analysis."""
+class ResearchDirection(SQLModel, table=True):
+    """One research direction: its own arXiv query, research idea and analysis prompt.
+
+    Papers belong to a direction and are analyzed against its idea; the home feed shows
+    one tab per direction.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
-    arxiv_id: str = Field(unique=True, index=True)
+    name: str = Field(default="研究方向")
+    position: int = Field(default=0)
+    research_focus: str = Field(default="", sa_column=Column(Text, default=""))   # arXiv query
+    research_idea: str = Field(default="", sa_column=Column(Text, default=""))    # analysis context
+    focus_keywords: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    system_prompt: str = Field(default="", sa_column=Column(Text, default=""))    # persona/rubric override
+    arxiv_categories: List[str] = Field(
+        default_factory=lambda: ["cs.CV", "cs.LG"], sa_column=Column(JSON)
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Paper(SQLModel, table=True):
+    """Paper model for storing arXiv papers with AI analysis.
+
+    The same arXiv paper may exist once per research direction (analyzed separately);
+    PDF, parse and figure caches are shared by arxiv_id.
+    """
+    __table_args__ = (Index("ux_paper_arxiv_direction", "arxiv_id", "direction_id", unique=True),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    arxiv_id: str = Field(index=True)
+    direction_id: Optional[int] = Field(default=None, index=True)
     title: str
     authors: str
     abstract: str = Field(sa_column=Column(Text))
@@ -51,6 +77,7 @@ class PaperRead(SQLModel):
     """Schema for reading paper data."""
     id: int
     arxiv_id: str
+    direction_id: Optional[int] = None
     title: str
     authors: str
     abstract: str

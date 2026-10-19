@@ -8,10 +8,11 @@ from sqlalchemy import or_
 
 from app.config import parsed_dir_for, pdf_path_for, thumbnail_path_for
 from app.logging_config import get_logger
-from app.models import Paper, PaperRead
+from app.database import ensure_default_direction
+from app.models import Paper, PaperRead, ResearchDirection
 from app.dependencies import get_session
 from app.services.analyzer import active_paper_ids
-from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch_async
+from app.services.arxiv_bot import get_arxiv_bot, pending_paper_ids, run_daily_fetch_async
 from app.services.parsers import clear_cache
 
 logger = get_logger("api.papers")
@@ -26,11 +27,14 @@ def get_papers(
     limit: int = Query(20, ge=1, le=100),
     min_score: Optional[float] = Query(None, ge=0, le=10),
     processed_only: bool = Query(False),
+    direction_id: Optional[int] = Query(None),
 ):
     """Get papers with optional filtering."""
     query = select(Paper).where(
         or_(Paper.processing_status.is_(None), Paper.processing_status != "skipped")
     )
+    if direction_id is not None:
+        query = query.where(Paper.direction_id == direction_id)
 
     if processed_only:
         query = query.where(Paper.is_processed == True)
@@ -48,7 +52,10 @@ def get_papers(
 
 
 @router.get("/pending")
-def get_pending_paper_ids(session: Session = Depends(get_session)):
+def get_pending_paper_ids(
+    session: Session = Depends(get_session),
+    direction_id: Optional[int] = Query(None),
+):
     """Get IDs of all pending/failed papers that need processing.
 
     Papers left in 'processing' that no run in this process owns are reset to 'pending'
@@ -68,17 +75,7 @@ def get_pending_paper_ids(session: Session = Depends(get_session)):
             session.add(paper)
         session.commit()
 
-    # Get all papers that need processing
-    papers = session.exec(
-        select(Paper.id).where(
-            Paper.is_processed == False,
-            or_(
-                Paper.processing_status == "pending",
-                Paper.processing_status == "failed",
-            ),
-        )
-    ).all()
-    return {"paper_ids": papers}
+    return {"paper_ids": pending_paper_ids(direction_id)}
 
 
 @router.get("/{paper_id}", response_model=PaperRead)
@@ -115,6 +112,7 @@ def delete_paper(paper_id: int, session: Session = Depends(get_session)):
 @router.post("/import")
 def import_paper_from_arxiv(
     arxiv_url: str = Query(..., description="arXiv URL or ID"),
+    direction_id: Optional[int] = Query(None, description="Direction to import into (default: first)"),
     session: Session = Depends(get_session),
 ):
     """Import a paper from arXiv by URL or ID."""
@@ -137,9 +135,15 @@ def import_paper_from_arxiv(
             detail="Invalid arXiv URL or ID. Please provide a valid arXiv link or ID"
         )
 
-    # Check if paper already exists
+    if direction_id is None or session.get(ResearchDirection, direction_id) is None:
+        direction_id = ensure_default_direction()
+
+    # Check if paper already exists in this direction
     existing = session.exec(
-        select(Paper).where(Paper.arxiv_id.startswith(arxiv_id.split('v')[0]))
+        select(Paper).where(
+            Paper.direction_id == direction_id,
+            Paper.arxiv_id.startswith(re.sub(r"v\d+$", "", arxiv_id)),
+        )
     ).first()
 
     if existing:
@@ -162,11 +166,11 @@ def import_paper_from_arxiv(
         )
 
     # Save to database
-    paper = bot.save_paper(session, paper_data)
+    paper = bot.save_paper(session, paper_data, direction_id)
 
     if not paper:
         existing = session.exec(
-            select(Paper).where(Paper.arxiv_id == paper_data.arxiv_id)
+            select(Paper).where(Paper.arxiv_id == paper_data.arxiv_id, Paper.direction_id == direction_id)
         ).first()
         return {
             "message": "Paper already exists in database",
