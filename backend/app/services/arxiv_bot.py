@@ -2,13 +2,12 @@ import asyncio
 import arxiv
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.logging_config import get_logger
 from app.models import Paper, PaperCreate, AppSettings
 from app.database import get_sync_session
-from app.services.pdf_renderer import generate_thumbnail
-from app.services.dify_client import get_dify_client
 
 logger = get_logger("services.arxiv_bot")
 
@@ -140,153 +139,72 @@ class ArxivBot:
         session.refresh(paper)
         return paper
 
-    async def process_paper(self, session: Session, paper: Paper) -> bool:
-        """Process a paper with Dify LLM analysis and thumbnail generation."""
-        if paper.is_processed:
-            return False
 
-        try:
-            paper.processing_status = "processing"
-            session.add(paper)
-            session.commit()
-            session.refresh(paper)
+MAX_CONCURRENT = 3
+_fetch_lock = asyncio.Lock()
 
-            client = get_dify_client()
-            settings = session.get(AppSettings, 1)
-            idea_input = settings.research_idea if settings and settings.research_idea else None
 
-            result = await client.analyze_paper(
-                pdf_url=paper.pdf_url,
-                title=paper.title,
-                user_id=f"batch-paper-{paper.id}",
-                idea_input=idea_input,
+def _record_fetch_time() -> None:
+    with get_sync_session() as session:
+        settings = session.get(AppSettings, 1) or AppSettings(id=1)
+        settings.last_fetch_at = datetime.utcnow()
+        session.add(settings)
+        session.commit()
+
+
+async def fetch_and_save(max_results: int = 50, hours_back: int = 168) -> tuple[int, int]:
+    """Fetch recent papers from arXiv and store new ones. Returns (fetched, saved)."""
+    async with _fetch_lock:
+        bot = get_arxiv_bot()
+        with get_sync_session() as session:
+            loop = asyncio.get_running_loop()
+            papers = await loop.run_in_executor(
+                None, bot.fetch_recent_papers, session, max_results, hours_back
             )
-
-            thumbnail_url = await generate_thumbnail(paper.arxiv_id, paper.pdf_url)
-
-            if thumbnail_url:
-                paper.thumbnail_url = thumbnail_url
-
-            if result:
-                analysis = client.to_llm_analysis(result)
-                paper.paper_essence = analysis.paper_essence
-                paper.concept_bridging = analysis.concept_bridging_str
-                paper.visual_verification = analysis.visual_verification
-                paper.relevance_score = analysis.relevance_score
-                paper.relevance_reason = analysis.relevance_reason
-                paper.heuristic_suggestion = analysis.heuristic_suggestion
-                paper.is_processed = True
-                paper.processed_at = datetime.utcnow()
-
-                if analysis.relevance_score >= 5:
-                    paper.processing_status = "processed"
-                else:
-                    paper.processing_status = "skipped"
-
-                session.add(paper)
-                session.commit()
-                logger.info("Paper %s processed (score=%.1f)", paper.arxiv_id, analysis.relevance_score)
-                return True
-
-            paper.processing_status = "failed"
-            session.add(paper)
-            session.commit()
-            session.refresh(paper)
-
-        except Exception as e:
-            logger.error("Failed to process paper %s: %s", paper.arxiv_id, e)
-            paper.processing_status = "failed"
-            session.add(paper)
-            session.commit()
-
-        return False
+            saved = sum(1 for paper_data in papers if bot.save_paper(session, paper_data))
+        _record_fetch_time()
+        logger.info("Fetched %d papers from arXiv, %d new", len(papers), saved)
+        return len(papers), saved
 
 
-async def run_daily_fetch_async():
-    """Async wrapper for daily fetch logic."""
-    logger.info("Starting daily paper fetch")
-
-    bot = ArxivBot()
-    session = get_sync_session()
-
-    MAX_CONCURRENT = 3
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-
-    async def process_with_semaphore(paper_id: int) -> bool:
-        async with semaphore:
-            task_session = get_sync_session()
-            try:
-                paper = task_session.get(Paper, paper_id)
-                if not paper:
-                    return False
-                return await bot.process_paper(task_session, paper)
-            finally:
-                task_session.close()
-
-    try:
-        loop = asyncio.get_running_loop()
-        papers = await loop.run_in_executor(None, bot.fetch_recent_papers, session, 50, 168)
-        logger.info("Fetched %d papers from arXiv", len(papers))
-
-        saved_count = 0
-        for paper_data in papers:
-            paper = bot.save_paper(session, paper_data)
-            if paper:
-                saved_count += 1
-        logger.info("Saved %d new papers to database", saved_count)
-
-        stuck_papers = session.exec(
-            select(Paper).where(
-                Paper.processing_status == "processing",
-                Paper.is_processed == False,
-            )
-        ).all()
-
-        reset_count = 0
-        for paper in stuck_papers:
-            paper.processing_status = "failed"
-            session.add(paper)
-            reset_count += 1
-
-        if reset_count > 0:
-            session.commit()
-            logger.warning("Reset %d stuck 'processing' papers to 'failed'", reset_count)
-
-        from sqlalchemy import or_
-        unprocessed = session.exec(
-            select(Paper).where(
+def pending_paper_ids() -> List[int]:
+    with get_sync_session() as session:
+        return list(session.exec(
+            select(Paper.id).where(
                 Paper.is_processed == False,
                 or_(
                     Paper.processing_status == "pending",
                     Paper.processing_status == "failed",
                 ),
             )
-        ).all()
+        ).all())
 
-        paper_ids = [p.id for p in unprocessed]
-        logger.info("Processing %d unprocessed papers (max %d concurrent)", len(paper_ids), MAX_CONCURRENT)
 
-        tasks = [process_with_semaphore(pid) for pid in paper_ids]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+async def run_daily_fetch_async():
+    """Fetch recent papers from arXiv, then analyze everything pending."""
+    from app.services.analyzer import analyze_paper, reasoning_configured
 
-        processed_count = sum(1 for r in results if r is True)
-        error_count = sum(1 for r in results if isinstance(r, Exception))
-
-        if error_count > 0:
-            logger.warning("%d papers encountered errors during processing", error_count)
-
-        logger.info("Processed %d papers with LLM analysis", processed_count)
-
+    logger.info("Starting daily paper fetch")
+    try:
+        await fetch_and_save()
     except Exception as e:
         logger.error("Daily fetch failed: %s", e)
-    finally:
-        session.close()
+        return
 
-    logger.info("Daily fetch completed")
+    if not reasoning_configured():
+        logger.info("No reasoning model configured — skipping analysis")
+        return
 
-def run_daily_fetch():
-    """Entry point that runs the async fetcher in a loop."""
-    asyncio.run(run_daily_fetch_async())
+    paper_ids = pending_paper_ids()
+    logger.info("Analyzing %d papers (max %d concurrent)", len(paper_ids), MAX_CONCURRENT)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    async def run(paper_id: int) -> bool:
+        async with semaphore:
+            return await analyze_paper(paper_id)
+
+    results = await asyncio.gather(*(run(pid) for pid in paper_ids))
+    logger.info("Daily fetch completed: %d/%d papers analyzed", sum(results), len(paper_ids))
 
 
 # Singleton instance

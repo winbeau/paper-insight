@@ -2,15 +2,17 @@
 
 import re
 from typing import List, Optional
-from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlmodel import Session, select
 from sqlalchemy import or_
 
+from app.config import parsed_dir_for, pdf_path_for, thumbnail_path_for
 from app.logging_config import get_logger
 from app.models import Paper, PaperRead
 from app.dependencies import get_session
-from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch
+from app.services.analyzer import active_paper_ids
+from app.services.arxiv_bot import get_arxiv_bot, run_daily_fetch_async
+from app.services.parsers import clear_cache
 
 logger = get_logger("api.papers")
 
@@ -49,13 +51,14 @@ def get_papers(
 def get_pending_paper_ids(session: Session = Depends(get_session)):
     """Get IDs of all pending/failed papers that need processing.
 
-    Also resets any stuck 'processing' papers to 'pending' so they can be retried.
+    Papers left in 'processing' that no run in this process owns are reset to 'pending'
+    (papers being analyzed right now — e.g. by the scheduler — are left alone).
     """
-    # Reset stuck "processing" papers
     stuck_papers = session.exec(
         select(Paper).where(
             Paper.processing_status == "processing",
             Paper.is_processed == False,
+            Paper.id.not_in(active_paper_ids()),
         )
     ).all()
 
@@ -94,14 +97,15 @@ def delete_paper(paper_id: int, session: Session = Depends(get_session)):
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
 
-    # Delete thumbnail file if exists
-    if paper.thumbnail_url:
-        thumbnail_path = Path(__file__).parent.parent / paper.thumbnail_url.lstrip("/")
-        if thumbnail_path.exists():
+    # Delete cached files: thumbnail, PDF, MinerU output
+    thumbnail_path = thumbnail_path_for(paper.thumbnail_url or "")
+    for path in (thumbnail_path, pdf_path_for(paper.arxiv_id)):
+        if path is not None and path.exists():
             try:
-                thumbnail_path.unlink()
-            except Exception as e:
-                logger.warning("Failed to delete thumbnail %s: %s", thumbnail_path, e)
+                path.unlink()
+            except OSError as e:
+                logger.warning("Failed to delete %s: %s", path, e)
+    clear_cache(parsed_dir_for(paper.arxiv_id))
 
     session.delete(paper)
     session.commit()
@@ -191,10 +195,7 @@ def get_paper_by_arxiv_id(arxiv_id: str, session: Session = Depends(get_session)
 
 
 @router.post("/fetch")
-def fetch_papers(
-    background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session),
-):
-    """Trigger paper fetching in the background."""
-    background_tasks.add_task(run_daily_fetch)
+def fetch_papers(background_tasks: BackgroundTasks):
+    """Trigger paper fetching (and analysis) in the background."""
+    background_tasks.add_task(run_daily_fetch_async)
     return {"message": "Paper fetch started in background"}

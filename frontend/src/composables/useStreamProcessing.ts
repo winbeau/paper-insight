@@ -1,19 +1,9 @@
 import { ref, computed, watch, onUnmounted, type Ref, type ComputedRef } from 'vue'
-import type { DifyAnalysisResult, StreamErrorEvent, ProgressStep } from '../types/paper'
-import { processPaperStream, getStreamErrorMessage } from '../services/api'
+import type { AnalysisResult, StreamErrorEvent, ProgressStep } from '../types/paper'
+import { processPaperStream, getStreamErrorMessage, parseStoredError } from '../services/api'
 
-// Pre-defined workflow steps with parallel groups
-// Steps with same group number are displayed in parallel
-export const WORKFLOW_STEPS: Array<{ label: string; group?: number }> = [
-  { label: '下载PDF' },
-  { label: '上传文件' },
-  { label: '用户输入' },
-  { label: 'Parse File', group: 1 },
-  { label: '知识检索', group: 1 },
-  { label: 'IMAGE-LLM', group: 1 },
-  { label: 'LLM' },
-  { label: '整合输出' },
-]
+// While a paper is analyzed elsewhere (scheduler, another card), poll until it finishes
+const BACKGROUND_POLL_MS = 5000
 
 export interface StreamProcessingState {
   isStreaming: Ref<boolean>
@@ -21,7 +11,7 @@ export interface StreamProcessingState {
   streamProgress: Ref<ProgressStep[]>
   streamThought: Ref<string>
   streamError: Ref<StreamErrorEvent | null>
-  streamResult: Ref<DifyAnalysisResult | null>
+  streamResult: Ref<AnalysisResult | null>
   localStatus: Ref<string | null>
 }
 
@@ -29,6 +19,7 @@ export interface StreamProcessingComputed {
   statusValue: ComputedRef<string | null>
   isProcessing: ComputedRef<boolean>
   isFailed: ComputedRef<boolean>
+  displayError: ComputedRef<StreamErrorEvent | null>
   statusLabel: ComputedRef<string>
   statusTag: ComputedRef<string>
 }
@@ -40,7 +31,7 @@ export interface StreamProcessingHandlers {
 export function useStreamProcessing(
   paperId: Ref<number>,
   processingStatus: Ref<string>,
-  _isProcessed: Ref<boolean>,
+  processingError: Ref<string | null>,
   onRefresh: (paperId: number) => void
 ): StreamProcessingState & StreamProcessingComputed & StreamProcessingHandlers {
   // State
@@ -49,29 +40,33 @@ export function useStreamProcessing(
   const streamProgress = ref<ProgressStep[]>([])
   const streamThought = ref('')
   const streamError = ref<StreamErrorEvent | null>(null)
-  const streamResult = ref<DifyAnalysisResult | null>(null)
+  const streamResult = ref<AnalysisResult | null>(null)
   const localStatus = ref<string | null>(null)
   let streamAbortFn: (() => void) | null = null
+  let pollTimer: ReturnType<typeof setInterval> | null = null
 
   // Computed
-  const statusValue = computed(() => {
-    return localStatus.value ?? processingStatus.value
-  })
+  const statusValue = computed(() => localStatus.value ?? processingStatus.value)
+  const isProcessing = computed(() => statusValue.value === 'processing')
+  const isFailed = computed(() => statusValue.value === 'failed')
 
-  const isProcessing = computed(() => {
-    return statusValue.value === 'processing'
-  })
-
-  const isFailed = computed(() => {
-    return statusValue.value === 'failed'
+  // Error from the live stream, else the one stored by the last failed run
+  const displayError = computed<StreamErrorEvent | null>(() => {
+    if (streamError.value) return streamError.value
+    if (isFailed.value) return parseStoredError(processingError.value)
+    return null
   })
 
   const statusLabel = computed(() => {
-    if (isStreaming.value || statusValue.value === 'processing') return 'Dify 分析中...'
-    if (statusValue.value === 'failed') return streamError.value
-      ? getStreamErrorMessage(streamError.value)
-      : 'Analysis failed'
-    return 'Queued for analysis'
+    if (isStreaming.value) {
+      const active = streamProgress.value.find(s => s.status === 'active')
+      return active?.message || active?.label || '分析中...'
+    }
+    if (statusValue.value === 'processing') return '后台分析中...'
+    if (statusValue.value === 'failed') {
+      return displayError.value ? getStreamErrorMessage(displayError.value) : '分析失败'
+    }
+    return '等待分析'
   })
 
   const statusTag = computed(() => {
@@ -81,124 +76,45 @@ export function useStreamProcessing(
     return 'pending'
   })
 
-  // Watch for paper status changes (e.g., batch processing started after page load)
-  watch(
-    () => processingStatus.value,
-    (newStatus, oldStatus) => {
-      // Clear progress when processing completes or fails (and we weren't streaming)
-      if (newStatus !== 'processing' && oldStatus === 'processing' && !isStreaming.value) {
-        streamProgress.value = []
-      }
-    }
-  )
-
-  // Map progress event to step update
-  function handleProgressEvent(event: { status: string; message: string }) {
-    if (event.status === 'started') {
-      // Initialize all steps as pending, first one active
-      streamProgress.value = WORKFLOW_STEPS.map((step, index) => ({
-        label: step.label,
-        status: index === 0 ? 'active' : 'pending',
-        group: step.group,
-      })) as ProgressStep[]
-    } else if (event.status === 'workflow_started') {
-      // Mark first two steps as done
-      const steps = streamProgress.value
-      if (steps.length >= 2) {
-        steps[0].status = 'done'
-        steps[1].status = 'done'
-      }
-      streamProgress.value = [...steps]
-    } else if (event.status === 'node_started') {
-      // Extract node name
-      const match = event.message.match(/执行节点:\s*(.+)/)
-      const nodeName = match ? match[1] : event.message
-
-      // Find and update the matching step
-      const steps = streamProgress.value
-      const stepIndex = steps.findIndex(s => s.label === nodeName)
-
-      if (stepIndex >= 0) {
-        // Mark all previous non-grouped steps as done (but not parallel ones that might still be running)
-        for (let i = 0; i < stepIndex; i++) {
-          if (steps[i].group === undefined) {
-            steps[i].status = 'done'
-          }
-        }
-        // Mark current step as active
-        steps[stepIndex].status = 'active'
-        // If this step has a group, also activate parallel steps in the same group
-        const currentGroup = steps[stepIndex].group
-        if (currentGroup !== undefined) {
-          steps.forEach((s) => {
-            if (s.group === currentGroup && s.status === 'pending') {
-              s.status = 'active'
-            }
-          })
-        }
-      } else {
-        // If node name doesn't match, just mark previous active as done and find next pending
-        const prevActive = steps.findIndex(s => s.status === 'active')
-        if (prevActive >= 0) {
-          // Mark all active steps as done (including parallel ones)
-          steps.forEach(s => {
-            if (s.status === 'active') {
-              s.status = 'done'
-            }
-          })
-          // Activate next pending step
-          const nextPending = steps.findIndex(s => s.status === 'pending')
-          if (nextPending >= 0) {
-            steps[nextPending].status = 'active'
-            // If next step has a group, also activate parallel steps
-            const nextGroup = steps[nextPending].group
-            if (nextGroup !== undefined) {
-              steps.forEach((s) => {
-                if (s.group === nextGroup && s.status === 'pending') {
-                  s.status = 'active'
-                }
-              })
-            }
-          }
-        }
-      }
-
-      streamProgress.value = [...steps]
-    } else if (event.status === 'node_finished') {
-      // Extract node name and mark only that specific step as done
-      const match = event.message.match(/完成节点:\s*(.+)/)
-      const nodeName = match ? match[1] : event.message
-
-      const steps = streamProgress.value
-      const stepIndex = steps.findIndex(s => s.label === nodeName)
-
-      if (stepIndex >= 0) {
-        // Mark only this specific step as done (allows parallel steps to complete independently)
-        steps[stepIndex].status = 'done'
-
-        // Check if all steps in the same parallel group are done
-        const currentGroup = steps[stepIndex].group
-        if (currentGroup !== undefined) {
-          const groupSteps = steps.filter(s => s.group === currentGroup)
-          const allGroupDone = groupSteps.every(s => s.status === 'done')
-
-          // If all parallel steps are done, activate the next non-grouped step
-          if (allGroupDone) {
-            const nextPending = steps.findIndex(s => s.status === 'pending' && s.group === undefined)
-            if (nextPending >= 0) {
-              steps[nextPending].status = 'active'
-            }
-          }
-        }
-      }
-
-      streamProgress.value = [...steps]
+  // Poll the paper while someone else is processing it, so the card updates when done
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
     }
   }
 
+  watch(
+    () => isProcessing.value && !isStreaming.value,
+    (backgroundRun) => {
+      stopPolling()
+      if (backgroundRun) {
+        pollTimer = setInterval(() => onRefresh(paperId.value), BACKGROUND_POLL_MS)
+      }
+    },
+    { immediate: true }
+  )
+
+  // A refreshed paper status supersedes the local one (e.g. background run finished)
+  watch(
+    () => processingStatus.value,
+    (newStatus, oldStatus) => {
+      if (isStreaming.value) return
+      if (localStatus.value === 'processing' && newStatus !== 'processing') localStatus.value = null
+      if (newStatus !== 'processing' && oldStatus === 'processing') streamProgress.value = []
+    }
+  )
+
+  function updateStep(key: string, status: ProgressStep['status'], message?: string) {
+    streamProgress.value = streamProgress.value.map(step =>
+      step.key === key
+        ? { ...step, status, message: message || step.message }
+        : step
+    )
+  }
+
   async function handleRetry() {
-    // Only block if already retrying or actively streaming
-    // Allow retry even if DB status is "processing" (stuck state after page refresh)
+    // Allow retry even if DB status is "processing" (the backend answers 'busy' if it really is)
     if (isRetrying.value || isStreaming.value) return
 
     isRetrying.value = true
@@ -210,26 +126,38 @@ export function useStreamProcessing(
     streamResult.value = null
 
     const { abort } = processPaperStream(paperId.value, {
+      onStarted: (event) => {
+        streamProgress.value = event.steps.map(step => ({ ...step, status: 'pending' as const }))
+      },
       onProgress: (event) => {
-        handleProgressEvent(event)
+        if (event.status === 'step_started') updateStep(event.step, 'active', event.message)
+        else if (event.status === 'step_progress') updateStep(event.step, 'active', event.message)
+        else if (event.status === 'step_finished') updateStep(event.step, 'done', event.message)
+        else if (event.status === 'step_skipped') updateStep(event.step, 'skipped', event.message)
       },
       onThinking: (_chunk, accumulated) => {
         streamThought.value = accumulated
       },
       onResult: (result) => {
         streamResult.value = result
-        // Mark all steps done
-        streamProgress.value = streamProgress.value.map(s => ({ ...s, status: 'done' as const }))
+        streamProgress.value = streamProgress.value.map(s =>
+          s.status === 'skipped' ? s : { ...s, status: 'done' as const }
+        )
       },
       onError: (error) => {
+        isStreaming.value = false
+        isRetrying.value = false
+        if (error.error === 'busy') {
+          // Someone else owns this run: show it as processing and poll for the outcome
+          streamProgress.value = []
+          localStatus.value = 'processing'
+          return
+        }
         streamError.value = error
-        // Mark active step as error
         streamProgress.value = streamProgress.value.map(s =>
           s.status === 'active' ? { ...s, status: 'error' as const } : s
         )
         localStatus.value = 'failed'
-        isStreaming.value = false
-        isRetrying.value = false
       },
       onDone: () => {
         isStreaming.value = false
@@ -242,8 +170,8 @@ export function useStreamProcessing(
     streamAbortFn = abort
   }
 
-  // Cleanup on unmount
   onUnmounted(() => {
+    stopPolling()
     if (streamAbortFn) {
       streamAbortFn()
       streamAbortFn = null
@@ -263,6 +191,7 @@ export function useStreamProcessing(
     statusValue,
     isProcessing,
     isFailed,
+    displayError,
     statusLabel,
     statusTag,
     // Handlers

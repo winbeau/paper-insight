@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import type { Paper, Stats, FilterType, StatusFilter, AppSettings } from './types/paper'
 import { fetchPapers, fetchStats, fetchPapersStream, fetchPendingPaperIds, fetchSettings, fetchPaper } from './services/api'
 import { getLogger } from './utils/logger'
+import { analysisSetupProblem } from './utils/settings'
 
 const logger = getLogger('App')
 import AppSidebar from './components/layout/AppSidebar.vue'
@@ -22,6 +23,11 @@ const showImportModal = ref(false)
 const MAX_CONCURRENT = 3
 const processingQueue = ref<number[]>([])  // Queue of paper IDs waiting to process
 const processingPaperIds = ref<Set<number>>(new Set())  // Currently processing paper IDs
+
+const sidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null)
+
+// First-run hint: analysis needs a reasoning model with an API key
+const setupProblem = computed(() => analysisSetupProblem(settings.value))
 
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
@@ -226,6 +232,7 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
   <div class="flex min-h-screen bg-[var(--color-paper-50)]">
     <!-- Sidebar -->
     <AppSidebar
+      ref="sidebarRef"
       :stats="stats"
       :settings="settings"
       :relevance-filter="relevanceFilter"
@@ -295,6 +302,31 @@ async function handlePaperImported(paperId: number, isNew: boolean) {
 
       <!-- Content Area -->
       <div class="p-8">
+        <!-- First-run setup banner -->
+        <div
+          v-if="setupProblem && !loading"
+          class="mb-6 flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4"
+        >
+          <div v-if="setupProblem.kind === 'key'">
+            <p class="text-sm font-semibold text-amber-900">填写 {{ setupProblem.provider.name }} API Key 以开始分析论文</p>
+            <p class="text-xs text-amber-800 mt-0.5">
+              默认使用 DeepSeek-V4.1-Flash（deepseek-flash）完成图像识别与推理分析；PDF 解析使用 MinerU（云端 Token 或本地安装）。
+            </p>
+          </div>
+          <div v-else>
+            <p class="text-sm font-semibold text-amber-900">配置模型以开始分析论文</p>
+            <p class="text-xs text-amber-800 mt-0.5">
+              添加一个兼容 OpenAI 接口的模型服务，然后在「解析流程」中选择推理模型、视觉模型与 MinerU 解析方式。
+            </p>
+          </div>
+          <button
+            class="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-[var(--color-ink-900)] rounded-lg hover:bg-[var(--color-ink-700)] transition-colors"
+            @click="sidebarRef?.openSettings(setupProblem.kind === 'key' || !settings?.providers.length ? 'providers' : 'pipeline')"
+          >
+            打开设置
+          </button>
+        </div>
+
         <!-- Loading State -->
         <div v-if="loading" class="flex items-center justify-center py-20">
           <div class="flex items-center gap-3 text-[var(--color-ink-400)]">

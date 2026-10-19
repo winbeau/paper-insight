@@ -3,21 +3,25 @@ import type {
   Paper,
   Stats,
   AppSettings,
-  DifyAnalysisResult,
+  AnalysisResult,
+  ArxivOption,
+  MineruStatus,
+  Provider,
+  ProviderModelsResult,
+  ProviderTestResult,
   StreamProgressEvent,
+  StreamStartedEvent,
   StreamThinkingEvent,
   StreamAnswerEvent,
   StreamErrorEvent,
-  StreamEventType,
 } from '../types/paper'
+import { apiBase } from '../utils/urls'
 import { getLogger } from '../utils/logger'
 
 const logger = getLogger('api')
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || '/paper-insight/api'
-
 export const api = axios.create({
-  baseURL,
+  baseURL: apiBase,
   timeout: 30000,
 })
 
@@ -95,273 +99,8 @@ export async function fetchStats(): Promise<Stats> {
   return data
 }
 
-export async function triggerFetch(): Promise<{ message: string }> {
-  const { data } = await api.post<{ message: string }>('/papers/fetch')
-  return data
-}
-
-// Fetch stream types
-export interface FetchDoneEvent {
-  status: 'done'
-  fetched: number
-  saved: number
-  message: string
-}
-
-export interface FetchStreamCallbacks {
-  onStarted?: () => void
-  onFetching?: (message: string) => void
-  onFetched?: (count: number, message: string) => void
-  onSaving?: (message: string) => void
-  onDone?: (event: FetchDoneEvent) => void
-  onError?: (error: Error) => void
-}
-
-/**
- * Fetch papers from arXiv with streaming progress.
- * Only fetches and saves - does NOT process papers.
- */
-export function fetchPapersStream(
-  callbacks: FetchStreamCallbacks,
-): { abort: () => void } {
-  const url = `${baseURL}/papers/fetch/stream`
-  const abortController = new AbortController()
-
-  const processStream = async () => {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'text/event-stream' },
-        signal: abortController.signal,
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        callbacks.onError?.(new Error(errorText || `HTTP Error: ${response.status}`))
-        return
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        callbacks.onError?.(new Error('Failed to get response reader'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const events = buffer.split('\n\n')
-        buffer = events.pop() || ''
-
-        for (const eventStr of events) {
-          if (!eventStr.trim()) continue
-
-          const lines = eventStr.trim().split('\n')
-          let eventType = ''
-          let dataStr = ''
-
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.slice(6).trim()
-            } else if (line.startsWith('data:')) {
-              dataStr = line.slice(5).trim()
-            }
-          }
-
-          if (!dataStr) continue
-
-          try {
-            const data = JSON.parse(dataStr)
-            switch (eventType) {
-              case 'started':
-                callbacks.onStarted?.()
-                break
-              case 'fetching':
-                callbacks.onFetching?.(data.message)
-                break
-              case 'fetched':
-                callbacks.onFetched?.(data.count, data.message)
-                break
-              case 'saving':
-                callbacks.onSaving?.(data.message)
-                break
-              case 'done':
-                callbacks.onDone?.(data as FetchDoneEvent)
-                break
-              case 'error':
-                callbacks.onError?.(new Error(data.error))
-                break
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
-      }
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') return
-      callbacks.onError?.(error as Error)
-    }
-  }
-
-  processStream()
-
-  return { abort: () => abortController.abort() }
-}
-
-export async function triggerBatchProcess(): Promise<{ message: string; count: number }> {
-  const { data } = await api.post<{ message: string; count: number }>('/papers/process/batch')
-  return data
-}
-
-// Batch processing stream types
-export interface BatchStartedEvent {
-  total: number
-}
-
-export interface BatchPaperCompletedEvent {
-  paper_id: number
-  title: string
-  processed: number
-  total: number
-}
-
-export interface BatchPaperProcessingEvent {
-  paper_id: number
-  title: string
-}
-
-export interface BatchPaperFailedEvent {
-  paper_id: number
-  title?: string
-  error?: string
-  failed: number
-  total: number
-}
-
-export interface BatchDoneEvent {
-  status: 'completed' | 'no_papers'
-  processed?: number
-  failed?: number
-  total?: number
-  message?: string
-}
-
-export interface BatchStreamCallbacks {
-  onStarted?: (event: BatchStartedEvent) => void
-  onPaperProcessing?: (event: BatchPaperProcessingEvent) => void
-  onPaperCompleted?: (event: BatchPaperCompletedEvent) => void
-  onPaperFailed?: (event: BatchPaperFailedEvent) => void
-  onDone?: (event: BatchDoneEvent) => void
-  onError?: (error: Error) => void
-}
-
-/**
- * Process all pending/failed papers with streaming progress updates.
- * Uses Server-Sent Events (SSE) to receive real-time updates.
- */
-export function processBatchStream(
-  callbacks: BatchStreamCallbacks,
-): { abort: () => void } {
-  const url = `${baseURL}/papers/process/batch/stream`
-  const abortController = new AbortController()
-
-  const processStream = async () => {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Accept: 'text/event-stream',
-        },
-        signal: abortController.signal,
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        callbacks.onError?.(new Error(errorText || `HTTP Error: ${response.status}`))
-        return
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        callbacks.onError?.(new Error('Failed to get response reader'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-
-        const events = buffer.split('\n\n')
-        buffer = events.pop() || ''
-
-        for (const eventStr of events) {
-          if (!eventStr.trim()) continue
-
-          const lines = eventStr.trim().split('\n')
-          let eventType = ''
-          let dataStr = ''
-
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.slice(6).trim()
-            } else if (line.startsWith('data:')) {
-              dataStr = line.slice(5).trim()
-            }
-          }
-
-          if (!dataStr) continue
-
-          try {
-            const data = JSON.parse(dataStr)
-            switch (eventType) {
-              case 'started':
-                callbacks.onStarted?.(data as BatchStartedEvent)
-                break
-              case 'paper_processing':
-                callbacks.onPaperProcessing?.(data as BatchPaperProcessingEvent)
-                break
-              case 'paper_completed':
-                callbacks.onPaperCompleted?.(data as BatchPaperCompletedEvent)
-                break
-              case 'paper_failed':
-                callbacks.onPaperFailed?.(data as BatchPaperFailedEvent)
-                break
-              case 'done':
-                callbacks.onDone?.(data as BatchDoneEvent)
-                break
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
-      }
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        return
-      }
-      callbacks.onError?.(error as Error)
-    }
-  }
-
-  processStream()
-
-  return {
-    abort: () => abortController.abort(),
-  }
-}
-
-export async function processPaper(id: number): Promise<{ message: string }> {
-  const { data } = await api.post<{ message: string }>(`/papers/${id}/process`)
+export async function fetchConstants(): Promise<{ arxiv_options: ArxivOption[] }> {
+  const { data } = await api.get<{ arxiv_options: ArxivOption[] }>('/constants')
   return data
 }
 
@@ -370,192 +109,264 @@ export async function fetchSettings(): Promise<AppSettings> {
   return data
 }
 
-export async function updateSettings(settings: AppSettings): Promise<AppSettings> {
+export async function updateSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
   const { data } = await api.put<AppSettings>('/settings', settings)
   return data
 }
 
-// Streaming API Types
-export interface StreamCallbacks {
-  onProgress?: (event: StreamProgressEvent) => void
-  onThinking?: (thought: string, accumulated: string) => void
-  onAnswer?: (answer: string, accumulated: string) => void
-  onResult?: (result: DifyAnalysisResult) => void
-  onError?: (error: StreamErrorEvent) => void
-  onDone?: () => void
+// --- Model providers ---
+
+export async function testProvider(
+  provider: Provider,
+  model: string,
+  kind: 'chat' | 'vision' = 'chat',
+): Promise<ProviderTestResult> {
+  const { data } = await api.post<ProviderTestResult>(
+    '/providers/test',
+    { provider, model, kind },
+    { timeout: 120000 },
+  )
+  return data
 }
 
+export async function listProviderModels(provider: Provider): Promise<ProviderModelsResult> {
+  const { data } = await api.post<ProviderModelsResult>(
+    '/providers/models',
+    { provider },
+    { timeout: 60000 },
+  )
+  return data
+}
+
+// --- Local MinerU runtime ---
+
+export async function fetchMineruStatus(): Promise<MineruStatus> {
+  const { data } = await api.get<MineruStatus>('/mineru/status')
+  return data
+}
+
+export async function startMineruInstall(tier: string, source: string): Promise<MineruStatus> {
+  const { data } = await api.post<MineruStatus>('/mineru/install', { tier, source })
+  return data
+}
+
+export async function cancelMineruInstall(): Promise<MineruStatus> {
+  const { data } = await api.post<MineruStatus>('/mineru/install/cancel', null, { timeout: 60000 })
+  return data
+}
+
+export async function uninstallMineru(): Promise<MineruStatus> {
+  const { data } = await api.post<MineruStatus>('/mineru/uninstall', null, { timeout: 120000 })
+  return data
+}
+
+export async function stopMineruServer(): Promise<MineruStatus> {
+  const { data } = await api.post<MineruStatus>('/mineru/server/stop', null, { timeout: 60000 })
+  return data
+}
+
+// --- Server-Sent Events ---
+
 /**
- * Process a paper with streaming response for real-time updates.
- * Uses Server-Sent Events (SSE) to receive incremental updates.
+ * Read an SSE endpoint with fetch (works in WKWebView, supports abort).
+ * Calls `onEvent(type, data)` for every event with a JSON `data:` line;
+ * comment/padding blocks are skipped.
  */
-export function processPaperStream(
-  id: number,
-  callbacks: StreamCallbacks,
+function readSSE(
+  path: string,
+  onEvent: (type: string, data: unknown) => void,
+  onFailure: (error: Error, status?: number) => void,
 ): { abort: () => void } {
-  const url = `${baseURL}/papers/${id}/process/stream`
   const abortController = new AbortController()
 
-  let accumulatedThought = ''
-  let accumulatedAnswer = ''
-
-  const processStream = async () => {
+  const run = async () => {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(`${apiBase}${path}`, {
         method: 'GET',
-        headers: {
-          Accept: 'text/event-stream',
-        },
+        headers: { Accept: 'text/event-stream' },
         signal: abortController.signal,
       })
-
       if (!response.ok) {
         const errorText = await response.text()
-        callbacks.onError?.({
-          error: `http_${response.status}`,
-          message: errorText || `HTTP Error: ${response.status}`,
-        })
+        onFailure(new Error(errorText || `HTTP Error: ${response.status}`), response.status)
         return
       }
-
       const reader = response.body?.getReader()
       if (!reader) {
-        callbacks.onError?.({
-          error: 'no_reader',
-          message: 'Failed to get response reader',
-        })
+        onFailure(new Error('Failed to get response reader'))
         return
       }
 
       const decoder = new TextDecoder()
       let buffer = ''
-
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
         buffer += decoder.decode(value, { stream: true })
+        const blocks = buffer.split('\n\n')
+        buffer = blocks.pop() || ''
 
-        // Process complete SSE events (separated by double newlines)
-        const events = buffer.split('\n\n')
-        buffer = events.pop() || '' // Keep incomplete event in buffer
-
-        for (const eventStr of events) {
-          if (!eventStr.trim()) continue
-
-          const { eventType, data } = parseSSEEvent(eventStr)
-          if (!eventType || !data) continue
-
-          handleStreamEvent(
-            eventType,
-            data,
-            callbacks,
-            { accumulatedThought, accumulatedAnswer },
-            (thought) => { accumulatedThought = thought },
-            (answer) => { accumulatedAnswer = answer },
-          )
+        for (const block of blocks) {
+          let eventType = 'message'
+          let dataStr = ''
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) eventType = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+          }
+          if (!dataStr) continue
+          let data: unknown
+          try {
+            data = JSON.parse(dataStr)
+          } catch {
+            continue // Skip malformed JSON
+          }
+          onEvent(eventType, data)
         }
       }
     } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        return // Intentional abort
+      if ((error as Error).name === 'AbortError') return
+      onFailure(error as Error)
+    }
+  }
+
+  run()
+  return { abort: () => abortController.abort() }
+}
+
+// Fetch stream
+export interface FetchDoneEvent {
+  status: 'done'
+  fetched: number
+  saved: number
+  message: string
+}
+
+export interface FetchStreamCallbacks {
+  onFetching?: (message: string) => void
+  onFetched?: (count: number, message: string) => void
+  onDone?: (event: FetchDoneEvent) => void
+  onError?: (error: Error) => void
+}
+
+/** Fetch new papers from arXiv with streaming progress (does not analyze them). */
+export function fetchPapersStream(callbacks: FetchStreamCallbacks): { abort: () => void } {
+  return readSSE(
+    '/papers/fetch/stream',
+    (type, data) => {
+      const event = data as Record<string, unknown>
+      if (type === 'fetching') callbacks.onFetching?.(event.message as string)
+      else if (type === 'fetched') callbacks.onFetched?.(event.count as number, event.message as string)
+      else if (type === 'done') callbacks.onDone?.(event as unknown as FetchDoneEvent)
+      else if (type === 'error') callbacks.onError?.(new Error(event.error as string))
+    },
+    (error) => callbacks.onError?.(error),
+  )
+}
+
+// Analysis stream
+export interface StreamCallbacks {
+  onStarted?: (event: StreamStartedEvent) => void
+  onProgress?: (event: StreamProgressEvent) => void
+  onThinking?: (thought: string, accumulated: string) => void
+  onAnswer?: (answer: string, accumulated: string) => void
+  onResult?: (result: AnalysisResult) => void
+  onError?: (error: StreamErrorEvent) => void
+  onDone?: () => void
+}
+
+/** Run the analysis pipeline for a paper, streaming step progress and model reasoning. */
+export function processPaperStream(id: number, callbacks: StreamCallbacks): { abort: () => void } {
+  let accumulatedThought = ''
+  let accumulatedAnswer = ''
+
+  return readSSE(
+    `/papers/${id}/process/stream`,
+    (type, data) => {
+      switch (type) {
+        case 'started':
+          callbacks.onStarted?.(data as StreamStartedEvent)
+          break
+        case 'progress':
+          callbacks.onProgress?.(data as StreamProgressEvent)
+          break
+        case 'thinking': {
+          const chunk = (data as StreamThinkingEvent).thought
+          accumulatedThought += chunk
+          callbacks.onThinking?.(chunk, accumulatedThought)
+          break
+        }
+        case 'answer': {
+          const chunk = (data as StreamAnswerEvent).answer
+          accumulatedAnswer += chunk
+          callbacks.onAnswer?.(chunk, accumulatedAnswer)
+          break
+        }
+        case 'result':
+          callbacks.onResult?.(data as AnalysisResult)
+          break
+        case 'error':
+          callbacks.onError?.(data as StreamErrorEvent)
+          break
+        case 'done':
+          callbacks.onDone?.()
+          break
       }
-      callbacks.onError?.({
-        error: 'stream_error',
-        message: (error as Error).message || 'Stream processing failed',
-      })
-    }
-  }
-
-  processStream()
-
-  return {
-    abort: () => abortController.abort(),
-  }
+    },
+    (error, status) => callbacks.onError?.({
+      error: status ? `http_${status}` : 'stream_error',
+      message: error.message || 'Stream processing failed',
+    }),
+  )
 }
 
-function parseSSEEvent(eventStr: string): {
-  eventType: StreamEventType | null
-  data: unknown
-} {
-  const lines = eventStr.trim().split('\n')
-  let eventType: StreamEventType | null = null
-  let dataStr = ''
-
-  for (const line of lines) {
-    if (line.startsWith('event:')) {
-      eventType = line.slice(6).trim() as StreamEventType
-    } else if (line.startsWith('data:')) {
-      dataStr = line.slice(5).trim()
-    }
-  }
-
-  if (!dataStr) return { eventType: null, data: null }
-
-  try {
-    return { eventType, data: JSON.parse(dataStr) }
-  } catch {
-    return { eventType: null, data: null }
-  }
+// MinerU install log stream
+export interface MineruInstallCallbacks {
+  onLog?: (line: string) => void
+  onDone?: (event: { error: string | null; step: string; status: MineruStatus }) => void
+  onError?: (error: Error) => void
 }
 
-function handleStreamEvent(
-  eventType: StreamEventType,
-  data: unknown,
-  callbacks: StreamCallbacks,
-  accumulated: { accumulatedThought: string; accumulatedAnswer: string },
-  setThought: (thought: string) => void,
-  setAnswer: (answer: string) => void,
-) {
-  switch (eventType) {
-    case 'progress':
-      callbacks.onProgress?.(data as StreamProgressEvent)
-      break
-
-    case 'thinking': {
-      const thinkingData = data as StreamThinkingEvent
-      const newThought = accumulated.accumulatedThought + thinkingData.thought
-      setThought(newThought)
-      callbacks.onThinking?.(thinkingData.thought, newThought)
-      break
-    }
-
-    case 'answer': {
-      const answerData = data as StreamAnswerEvent
-      const newAnswer = accumulated.accumulatedAnswer + answerData.answer
-      setAnswer(newAnswer)
-      callbacks.onAnswer?.(answerData.answer, newAnswer)
-      break
-    }
-
-    case 'result':
-      callbacks.onResult?.(data as DifyAnalysisResult)
-      break
-
-    case 'error':
-      callbacks.onError?.(data as StreamErrorEvent)
-      break
-
-    case 'done':
-      callbacks.onDone?.()
-      break
-  }
+export function followMineruInstall(callbacks: MineruInstallCallbacks): { abort: () => void } {
+  return readSSE(
+    '/mineru/install/stream',
+    (type, data) => {
+      if (type === 'log') callbacks.onLog?.((data as { line: string }).line)
+      else if (type === 'done') callbacks.onDone?.(data as { error: string | null; step: string; status: MineruStatus })
+    },
+    (error) => callbacks.onError?.(error),
+  )
 }
 
-/**
- * Get error message for display based on error type.
- */
+/** Human-readable message for a pipeline error event. */
 export function getStreamErrorMessage(error: StreamErrorEvent): string {
   switch (error.error) {
+    case 'config_error':
+      return error.message || '请先在设置中配置模型'
+    case 'parse_error':
+      return `PDF 解析失败 (MinerU): ${error.message}`
+    case 'download_error':
+      return `PDF 下载失败: ${error.message}`
+    case 'llm_error':
+      return `模型调用失败: ${error.message}`
     case 'entity_too_large':
-      return '论文内容过长，请尝试手动处理'
+      return `论文内容过长: ${error.message}`
     case 'timeout':
       return '分析超时，请稍后重试'
     case 'rate_limit':
-      return '请求过于频繁，请稍后重试'
-    case 'dify_error':
-      return `Dify服务错误: ${error.message}`
+      return '请求过于频繁或额度不足，请稍后重试'
+    case 'busy':
+      return '该论文正在后台分析中'
+    case 'interrupted':
+      return '分析被中断，请重试'
     default:
       return error.message || '未知错误'
   }
+}
+
+/** Parse a stored `processing_error` ("code: message") into an error event. */
+export function parseStoredError(value: string | null | undefined): StreamErrorEvent | null {
+  if (!value) return null
+  const index = value.indexOf(': ')
+  if (index <= 0) return { error: 'unknown', message: value }
+  return { error: value.slice(0, index), message: value.slice(index + 2) }
 }

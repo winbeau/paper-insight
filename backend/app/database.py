@@ -1,135 +1,110 @@
 import os
+
+from sqlalchemy import event, inspect, text
 from sqlmodel import SQLModel, create_engine, Session
-from sqlalchemy import inspect, text
-from dotenv import load_dotenv
 
-load_dotenv()
+from app.config import DB_PATH
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/paper_insight"
+DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    # The scheduler thread, threadpool endpoints and streaming tasks all share the engine
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
-engine = create_engine(DATABASE_URL, echo=False)
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 
 def create_db_and_tables():
     """Create all database tables."""
     SQLModel.metadata.create_all(engine)
+    # The DB holds API keys: keep it private to the user
+    for suffix in ("", "-wal", "-shm"):
+        path = f"{DB_PATH}{suffix}"
+        if os.path.exists(path):
+            os.chmod(path, 0o600)
+
+
+def _add_missing_columns(table: str, wanted: dict[str, str]) -> set[str]:
+    """ALTER TABLE ADD COLUMN for every missing column. Returns the names added."""
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns(table)}
+    added = {name for name in wanted if name not in columns}
+    if added:
+        with engine.begin() as conn:
+            for name in added:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {wanted[name]}"))
+    return added
 
 
 def ensure_appsettings_schema():
     """Ensure AppSettings has expected columns for legacy databases."""
-    inspector = inspect(engine)
-    if "appsettings" not in inspector.get_table_names():
+    if "appsettings" not in inspect(engine).get_table_names():
         return
 
-    columns = {col["name"] for col in inspector.get_columns("appsettings")}
-    added = set()
-    ddl_statements = []
+    _add_missing_columns(
+        "appsettings",
+        {
+            "research_focus": "TEXT",
+            "research_idea": "TEXT",
+            "focus_keywords": "JSON",
+            "system_prompt": "TEXT",
+            "arxiv_categories": "JSON",
+            "providers": "JSON",
+            "pipeline": "JSON",
+            "proxy_url": "TEXT",
+            "last_fetch_at": "DATETIME",
+        },
+    )
 
-    if "research_focus" not in columns:
-        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN research_focus TEXT")
-        added.add("research_focus")
-    if "research_idea" not in columns:
-        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN research_idea TEXT")
-        added.add("research_idea")
-    if "focus_keywords" not in columns:
-        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN focus_keywords JSON")
-        added.add("focus_keywords")
-    if "system_prompt" not in columns:
-        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN system_prompt TEXT")
-        added.add("system_prompt")
-    if "arxiv_categories" not in columns:
-        ddl_statements.append("ALTER TABLE appsettings ADD COLUMN arxiv_categories JSON")
-        added.add("arxiv_categories")
-
-    if not ddl_statements and not columns:
-        return
-
-    final_columns = columns | added
+    # Backfill NULLs (cheap no-ops once filled)
     with engine.begin() as conn:
-        for stmt in ddl_statements:
-            conn.execute(text(stmt))
-
-        if "research_focus" in final_columns:
+        for column, value in (
+            ("research_focus", "''"),
+            ("research_idea", "''"),
+            ("system_prompt", "''"),
+            ("proxy_url", "''"),
+            ("focus_keywords", "'[]'"),
+            ("providers", "'[]'"),
+            ("pipeline", "'{}'"),
+            ("arxiv_categories", "'[\"cs.CV\",\"cs.LG\"]'"),
+        ):
             conn.execute(
-                text("UPDATE appsettings SET research_focus = '' WHERE research_focus IS NULL")
-            )
-        if "research_idea" in final_columns:
-            conn.execute(
-                text("UPDATE appsettings SET research_idea = '' WHERE research_idea IS NULL")
-            )
-        if "system_prompt" in final_columns:
-            conn.execute(
-                text("UPDATE appsettings SET system_prompt = '' WHERE system_prompt IS NULL")
-            )
-        if "focus_keywords" in final_columns:
-            conn.execute(
-                text("UPDATE appsettings SET focus_keywords = '[]' WHERE focus_keywords IS NULL")
-            )
-        if "arxiv_categories" in final_columns:
-            conn.execute(
-                text(
-                    "UPDATE appsettings SET arxiv_categories = "
-                    "'[\"cs.CV\",\"cs.LG\"]' WHERE arxiv_categories IS NULL"
-                )
+                text(f"UPDATE appsettings SET {column} = {value} WHERE {column} IS NULL")
             )
 
 
 def ensure_paper_schema():
     """Ensure Paper has expected columns for legacy databases."""
-    inspector = inspect(engine)
-    table_name = None
-    if "paper" in inspector.get_table_names():
-        table_name = "paper"
-    elif "papers" in inspector.get_table_names():
-        table_name = "papers"
-
+    table_names = inspect(engine).get_table_names()
+    table_name = next((t for t in ("paper", "papers") if t in table_names), None)
     if not table_name:
         return
 
-    columns = {col["name"] for col in inspector.get_columns(table_name)}
-    added = set()
-    ddl_statements = []
+    added = _add_missing_columns(
+        table_name,
+        {
+            "processing_status": "TEXT",
+            "paper_essence": "TEXT",
+            "concept_bridging": "TEXT",
+            "visual_verification": "TEXT",
+            "heuristic_suggestion": "TEXT",
+            "processing_started_at": "DATETIME",
+            "processing_error": "TEXT",
+        },
+    )
 
-    if "processing_status" not in columns:
-        ddl_statements.append(
-            f"ALTER TABLE {table_name} ADD COLUMN processing_status TEXT"
-        )
-        added.add("processing_status")
-
-    # New LLM output format fields
-    if "paper_essence" not in columns:
-        ddl_statements.append(
-            f"ALTER TABLE {table_name} ADD COLUMN paper_essence TEXT"
-        )
-        added.add("paper_essence")
-
-    if "concept_bridging" not in columns:
-        ddl_statements.append(
-            f"ALTER TABLE {table_name} ADD COLUMN concept_bridging TEXT"
-        )
-        added.add("concept_bridging")
-
-    if "visual_verification" not in columns:
-        ddl_statements.append(
-            f"ALTER TABLE {table_name} ADD COLUMN visual_verification TEXT"
-        )
-        added.add("visual_verification")
-
-    if "heuristic_suggestion" not in columns:
-        ddl_statements.append(
-            f"ALTER TABLE {table_name} ADD COLUMN heuristic_suggestion TEXT"
-        )
-        added.add("heuristic_suggestion")
-
-    final_columns = columns | added
-    with engine.begin() as conn:
-        for stmt in ddl_statements:
-            conn.execute(text(stmt))
-
-        if "processing_status" in final_columns:
+    if "processing_status" in added:
+        with engine.begin() as conn:
             conn.execute(
                 text(
                     f"UPDATE {table_name} "
@@ -148,6 +123,19 @@ def ensure_paper_schema():
                     "AND processing_status = 'processed'"
                 )
             )
+
+
+def reset_interrupted_processing() -> int:
+    """Mark papers left in 'processing' by a previous run (crash/quit) as failed."""
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                "UPDATE paper SET processing_status = 'failed', "
+                "processing_error = 'interrupted' "
+                "WHERE processing_status = 'processing' AND is_processed = FALSE"
+            )
+        )
+        return result.rowcount or 0
 
 
 def get_sync_session() -> Session:

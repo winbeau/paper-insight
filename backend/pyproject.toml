@@ -10,10 +10,24 @@ dependencies = [
     "fastapi>=0.128.0",
     "httpx>=0.28.1",
     "openai>=2.14.0",
-    "psycopg2-binary>=2.9.11",
     "pymupdf>=1.26.7",
-    "python-dotenv>=1.2.1",
+    "pywebview>=6.2.1",
     "socksio>=1.0.0",
     "sqlmodel>=0.0.31",
     "uvicorn>=0.40.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore:datetime.datetime.utcnow:DeprecationWarning", "ignore:The default datetime adapter:DeprecationWarning"]
