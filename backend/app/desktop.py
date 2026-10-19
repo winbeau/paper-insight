@@ -8,6 +8,7 @@ Dev:      cd backend && uv run python -m app.desktop
 Packaged: packaging/PaperInsight.spec (see scripts/build_mac.sh)
 """
 
+import contextlib
 import fcntl
 import html
 import os
@@ -22,6 +23,8 @@ STARTUP_TIMEOUT = 60
 
 def _port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Like uvicorn's own bind: a port in TIME_WAIT (right after a quit) is usable
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True
@@ -107,7 +110,7 @@ def main() -> None:
         port=port,
         log_config=None,          # app.logging_config already set up handlers
         access_log=False,
-        timeout_graceful_shutdown=3,  # don't wait on open SSE streams when quitting
+        timeout_graceful_shutdown=0.5,  # quitting cancels open streams (analyses resume later)
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, name="uvicorn", daemon=True)
@@ -117,20 +120,33 @@ def main() -> None:
     stopped = threading.Event()
 
     def shutdown() -> None:
-        """Stop the server (scheduler, MinerU server via lifespan). Idempotent."""
+        """Stop the server (scheduler, MinerU via lifespan). Idempotent; well under 1s."""
         if stopped.is_set():
             return
         stopped.set()
+        started = time.monotonic()
         logger.info("Shutting down")
         server.should_exit = True
-        thread.join(timeout=8)
+        thread.join(timeout=2.5)
         if thread.is_alive():
             server.force_exit = True
-            thread.join(timeout=3)
-        # Lifespan shutdown normally stops it; make sure no MinerU server outlives the app
+            thread.join(timeout=1)
+        # Lifespan shutdown normally stops it; make sure no MinerU process outlives the app
         from app.services.mineru_runtime import get_mineru_runtime
 
-        get_mineru_runtime().stop_server_sync()
+        get_mineru_runtime().kill_now()
+        logger.info("Shutdown took %.2fs", time.monotonic() - started)
+
+    def on_closing() -> None:
+        """Close button, Cmd+Q and macOS logout all land here, on the main thread, before
+        the app terminates. Hide the window first so quitting feels instant, then clean
+        up (~0.2s idle, <1s with open requests) and let the quit proceed — never cancel
+        it, or macOS would report that the app interrupted logout/restart."""
+        native = getattr(window, "native", None)
+        if native is not None:
+            with contextlib.suppress(Exception):
+                native.orderOut_(None)
+        shutdown()
 
     if _wait_until_healthy(port, server, thread):
         window = webview.create_window(
@@ -146,9 +162,8 @@ def main() -> None:
         window = webview.create_window(
             APP_NAME, html=_error_page("本地服务未能启动。", LOG_DIR / "app.log"), width=760, height=560
         )
-    # `closing` runs synchronously on the main thread for both the close button and
-    # Cmd+Q — and Cmd+Q exits the process without returning from webview.start().
-    window.events.closing += shutdown
+    # `closing` runs synchronously on the main thread for both the close button and Cmd+Q
+    window.events.closing += on_closing
 
     # Blocks until the window is closed (pywebview must own the main thread on macOS)
     webview.start(private_mode=False, storage_path=str(DATA_DIR / "webview"))

@@ -1,5 +1,6 @@
 """PaperInsight FastAPI application entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
@@ -82,7 +83,8 @@ async def lifespan(app: FastAPI):
     yield
 
     scheduler.shutdown(wait=False)
-    await get_mineru_runtime().stop_server()
+    # Quick, lock-free stop: quitting must not wait for MinerU (see MineruRuntime.kill_now)
+    await asyncio.to_thread(get_mineru_runtime().kill_now)
     logger.info("Shutdown complete")
 
 

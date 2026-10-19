@@ -453,23 +453,34 @@ class MineruRuntime:
                 await asyncio.to_thread(proc.wait, 5)
         self.pid_path.unlink(missing_ok=True)
 
-    def stop_server_sync(self) -> None:
-        """Best-effort stop for interpreter shutdown paths (no event loop)."""
-        proc = self._server
-        if proc is not None and proc.poll() is None:
-            self._terminate_group(proc.pid)
+    def kill_now(self, grace: float = 0.5) -> None:
+        """App is quitting: stop the api-server and any install job right away.
+
+        Lock-free (ensure_server may be holding the lock while models load) and with a
+        short grace period — an inference server has no state worth a long wait.
+        """
+        proc, install = self._server, self._install_proc
+        self._server = None
+        self._server_url = None
+        self._server_tier = None
+        for running in (proc, install):
+            pid = getattr(running, "pid", None)
+            if pid is not None and running.returncode is None and (
+                not isinstance(running, subprocess.Popen) or running.poll() is None
+            ):
+                self._terminate_group(pid, grace)
         self.pid_path.unlink(missing_ok=True)
 
     @staticmethod
-    def _terminate_group(pid: int) -> None:
+    def _terminate_group(pid: int, grace: float = 5.0) -> None:
         try:
             pgid = os.getpgid(pid)
         except ProcessLookupError:
             return
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pgid, signal.SIGTERM)
-        for _ in range(50):
-            time.sleep(0.1)
+        for _ in range(max(1, int(grace / 0.05))):
+            time.sleep(0.05)
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
