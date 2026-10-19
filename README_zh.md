@@ -17,6 +17,8 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
 </p>
 
+<p align="center"><a href="https://winbeau.github.io/paper-insight/"><b>▶ 在线演示</b></a> · <a href="https://github.com/winbeau/paper-insight/releases/latest">下载 macOS 版</a></p>
+
 ## 概述
 
 PaperInsight 每天从 arXiv 获取新论文，用 **MinerU** 解析 PDF，用**视觉模型**解读图表，再由**推理模型**评估论文与你研究 Idea 的关联 —— 全部在一个原生 macOS 窗口中完成。每个依赖模型的步骤都可单独配置，支持任意 **兼容 OpenAI 接口** 的服务。

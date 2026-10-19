@@ -17,6 +17,9 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import DirectionTabs from './components/layout/DirectionTabs.vue'
 import PaperCard from './components/paper/PaperCard.vue'
 import ArxivImportModal from './components/ArxivImportModal.vue'
+import DemoBanner from './demo/DemoBanner.vue'
+
+const isDemo = import.meta.env.VITE_DEMO === 'true'
 
 const logger = getLogger('App')
 const ACTIVE_DIRECTION_KEY = 'paperinsight.activeDirection'
@@ -376,6 +379,8 @@ onUnmounted(stopListening)
         </div>
       </div>
     </main>
+
+    <DemoBanner v-if="isDemo" />
 
     <!-- Import Modal -->
     <ArxivImportModal
