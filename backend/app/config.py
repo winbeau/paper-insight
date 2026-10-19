@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "PaperInsight"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
