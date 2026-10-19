@@ -240,6 +240,19 @@ export async function stopMineruServer(): Promise<MineruStatus> {
 
 // --- Server-Sent Events ---
 
+export type SSEReader = (
+  path: string,
+  onEvent: (type: string, data: unknown) => void,
+  onFailure: (error: Error, status?: number) => void,
+  body?: unknown,
+) => { abort: () => void }
+
+// The static web demo replaces the network with recorded streams (see src/demo)
+let sseOverride: SSEReader | null = null
+export function setSSEOverride(reader: SSEReader) {
+  sseOverride = reader
+}
+
 /**
  * Read an SSE endpoint with fetch (works in WKWebView, supports abort).
  * Calls `onEvent(type, data)` for every event with a JSON `data:` line;
@@ -251,6 +264,7 @@ function readSSE(
   onFailure: (error: Error, status?: number) => void,
   body?: unknown,
 ): { abort: () => void } {
+  if (sseOverride) return sseOverride(path, onEvent, onFailure, body)
   const abortController = new AbortController()
 
   const run = async () => {

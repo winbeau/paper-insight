@@ -17,6 +17,8 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
 </p>
 
+<p align="center"><a href="https://winbeau.github.io/paper-insight/"><b>▶ Live demo</b></a> · <a href="https://github.com/winbeau/paper-insight/releases/latest">Download for macOS</a></p>
+
 ## Overview
 
 PaperInsight fetches new papers from arXiv every day, parses each PDF with **MinerU**, reads its figures with a **vision model**, and has a **reasoning model** judge how the paper relates to your research idea — all inside a native macOS window. Every model-backed step is configurable and talks to any **OpenAI-compatible API**.
@@ -132,6 +134,8 @@ paper-insight/
 ```
 
 The local API listens on `127.0.0.1` only and rejects requests from other hosts and cross-site origins.
+
+The [live demo](https://winbeau.github.io/paper-insight/) is the same frontend built with `VITE_DEMO=true`: an in-browser mock (`frontend/src/demo/`) serves a recorded real run — papers, MinerU + DeepSeek analyses and "Fill with AI" agent streams are replayed. `.github/workflows/demo-pages.yml` publishes it on every push to `main` that touches the frontend.
 
 ## License
 
