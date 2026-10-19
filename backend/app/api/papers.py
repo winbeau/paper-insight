@@ -6,14 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlmodel import Session, select
 from sqlalchemy import or_
 
-from app.config import parsed_dir_for, pdf_path_for, thumbnail_path_for
 from app.logging_config import get_logger
 from app.database import ensure_default_direction
 from app.models import Paper, PaperRead, ResearchDirection
 from app.dependencies import get_session
 from app.services.analyzer import active_paper_ids
 from app.services.arxiv_bot import get_arxiv_bot, pending_paper_ids, run_daily_fetch_async
-from app.services.parsers import clear_cache
+from app.services.history import delete_papers
 
 logger = get_logger("api.papers")
 
@@ -89,23 +88,12 @@ def get_paper(paper_id: int, session: Session = Depends(get_session)):
 
 @router.delete("/{paper_id}")
 def delete_paper(paper_id: int, session: Session = Depends(get_session)):
-    """Delete a specific paper by ID, including associated thumbnail."""
-    paper = session.get(Paper, paper_id)
-    if not paper:
+    """Delete a paper; its cached files go too unless another direction still has it."""
+    if not session.get(Paper, paper_id):
         raise HTTPException(status_code=404, detail="Paper not found")
-
-    # Delete cached files: thumbnail, PDF, MinerU output
-    thumbnail_path = thumbnail_path_for(paper.thumbnail_url or "")
-    for path in (thumbnail_path, pdf_path_for(paper.arxiv_id)):
-        if path is not None and path.exists():
-            try:
-                path.unlink()
-            except OSError as e:
-                logger.warning("Failed to delete %s: %s", path, e)
-    clear_cache(parsed_dir_for(paper.arxiv_id))
-
-    session.delete(paper)
-    session.commit()
+    result = delete_papers([paper_id])
+    if result["skipped_active"]:
+        raise HTTPException(status_code=409, detail="Paper is being analyzed")
     return {"message": "Paper deleted successfully", "paper_id": paper_id}
 
 

@@ -53,10 +53,7 @@ const setupProblem = computed(() => analysisSetupProblem(settings.value))
 const relevanceFilter = ref<FilterType>('all')
 const statusFilter = ref<StatusFilter>('all')
 
-const MAX_KEYWORD_CHIPS = 12
-const allFocusKeywords = computed(() => activeDirection.value?.focus_keywords ?? [])
-const focusKeywords = computed(() => allFocusKeywords.value.slice(0, MAX_KEYWORD_CHIPS))
-const hiddenKeywordCount = computed(() => Math.max(0, allFocusKeywords.value.length - MAX_KEYWORD_CHIPS))
+const focusKeywords = computed(() => activeDirection.value?.focus_keywords ?? [])
 
 const filteredPapers = computed(() => {
   let result = papers.value
@@ -251,21 +248,36 @@ onUnmounted(stopListening)
           @select="selectDirection"
           @add="addDirection"
         />
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="font-display text-xl font-semibold text-[var(--color-ink-900)]">
-              {{ activeDirection?.name ?? 'Research Feed' }}
-            </h2>
-            <p class="text-sm text-[var(--color-ink-400)]">
-              {{ filteredPapers.length }} papers
-              <span v-if="relevanceFilter !== 'all' || statusFilter !== 'all'">
-                (filtered)
+        <!-- One line: paper count · research focus · search -->
+        <div class="flex items-center gap-4">
+          <div class="flex-1 min-w-0 flex items-center gap-3">
+            <span class="flex-shrink-0 text-sm text-[var(--color-ink-400)] whitespace-nowrap">
+              {{ filteredPapers.length }} papers<span v-if="relevanceFilter !== 'all' || statusFilter !== 'all'"> (filtered)</span>
+            </span>
+            <span class="flex-shrink-0 h-4 w-px bg-[var(--color-paper-300)]"></span>
+            <span class="flex-shrink-0 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)] whitespace-nowrap">
+              Research Focus
+            </span>
+            <div
+              v-if="focusKeywords.length > 0"
+              class="min-w-0 flex items-center gap-2 overflow-hidden [mask-image:linear-gradient(to_right,black_88%,transparent)]"
+              :title="focusKeywords.join(' · ')"
+            >
+              <span
+                v-for="keyword in focusKeywords"
+                :key="keyword"
+                class="flex-shrink-0 px-2.5 py-1 rounded-md bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] text-xs text-[var(--color-ink-700)] font-mono shadow-sm"
+              >
+                {{ keyword }}
               </span>
-            </p>
+            </div>
+            <span v-else class="min-w-0 truncate text-xs text-[var(--color-ink-400)] italic">
+              No focus set. Default query used.
+            </span>
           </div>
 
           <!-- Search (placeholder) -->
-          <div class="relative">
+          <div class="relative flex-shrink-0">
             <svg
               class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-400)]"
               fill="none"
@@ -280,26 +292,6 @@ onUnmounted(stopListening)
               class="w-64 pl-10 pr-4 py-2 bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] rounded-lg text-sm text-[var(--color-ink-700)] placeholder-[var(--color-ink-400)] focus:outline-none focus:ring-2 focus:ring-[var(--color-ink-200)] focus:border-transparent transition-all"
             />
           </div>
-        </div>
-        <div class="mt-3 flex flex-wrap items-center gap-2">
-          <span class="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">
-            Research Focus
-          </span>
-          <div v-if="focusKeywords.length > 0" class="flex flex-wrap gap-2">
-            <span
-              v-for="keyword in focusKeywords"
-              :key="keyword"
-              class="px-2.5 py-1 rounded-md bg-[var(--color-paper-100)] border border-[var(--color-paper-200)] text-xs text-[var(--color-ink-700)] font-mono shadow-sm"
-            >
-              {{ keyword }}
-            </span>
-            <span v-if="hiddenKeywordCount" class="px-2 py-1 text-xs text-[var(--color-ink-400)]">
-              +{{ hiddenKeywordCount }}
-            </span>
-          </div>
-          <span v-else class="text-xs text-[var(--color-ink-400)] italic">
-            No focus set. Default query used.
-          </span>
         </div>
       </header>
 

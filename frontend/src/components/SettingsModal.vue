@@ -7,10 +7,11 @@ import { analysisSetupProblem } from '../utils/settings'
 import DirectionsTab from './settings/DirectionsTab.vue'
 import ProvidersTab from './settings/ProvidersTab.vue'
 import PipelineTab from './settings/PipelineTab.vue'
+import HistoryTab from './settings/HistoryTab.vue'
 
 const logger = getLogger('SettingsModal')
 
-type TabKey = 'research' | 'providers' | 'pipeline'
+type TabKey = 'research' | 'providers' | 'pipeline' | 'history'
 
 const props = defineProps<{
   initialTab?: TabKey
@@ -24,6 +25,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'research', label: '研究方向' },
   { key: 'providers', label: '模型服务' },
   { key: 'pipeline', label: '解析流程' },
+  { key: 'history', label: '历史记录' },
 ]
 
 const activeTab = ref<TabKey>(props.initialTab ?? 'research')
@@ -131,6 +133,7 @@ async function saveSettings() {
             />
             <ProvidersTab v-if="activeTab === 'providers'" v-model:settings="settings" />
             <PipelineTab v-else-if="activeTab === 'pipeline'" v-model:settings="settings" />
+            <HistoryTab v-else-if="activeTab === 'history'" />
           </template>
         </div>
 
@@ -152,7 +155,7 @@ async function saveSettings() {
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <span v-else>✨</span>
-            {{ directionsTab.autofillStatus === 'running' ? 'AI 填写中…' : directionsTab.autofillStatus === 'done' ? '查看 AI 结果' : 'AI 帮我填写' }}
+            {{ directionsTab.autofillStatus === 'running' ? 'AI filling…' : directionsTab.autofillStatus === 'done' ? 'Review AI result' : 'Fill with AI' }}
           </button>
           <p class="flex-1 min-w-0 truncate text-xs">
             <span v-if="saveError" class="text-red-600">{{ saveError }}</span>

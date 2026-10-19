@@ -72,7 +72,7 @@ function pct(value: number | null) {
         <div class="px-6 py-4 border-b border-gray-100 flex items-start justify-between gap-4">
           <div>
             <h3 class="text-base font-semibold text-[var(--color-ink-900)] flex items-center gap-2">
-              <span>✨</span> AI 帮我填写「{{ direction.name || '研究方向' }}」
+              <span>✨</span> Fill with AI「{{ direction.name || '研究方向' }}」
             </h3>
             <p class="text-xs text-gray-500 mt-1">
               用大白话描述你的研究，推理模型会生成分类、检索式、研究 Idea 与评分标准，并在 arXiv 上多轮实测检索式。

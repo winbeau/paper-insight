@@ -7,7 +7,11 @@ import type {
   AutofillFields,
   AutofillResult,
   AutofillRound,
+  DeleteResult,
   DirectionSummary,
+  HistoryFilter,
+  HistoryPage,
+  StorageUsage,
   UsageTotals,
   ArxivOption,
   MineruStatus,
@@ -129,6 +133,41 @@ export async function fetchSettings(): Promise<AppSettings> {
 
 export async function updateSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
   const { data } = await api.put<AppSettings>('/settings', settings)
+  return data
+}
+
+// --- History management ---
+
+function filterParams(filter: HistoryFilter) {
+  return {
+    direction_id: filter.direction_id ?? undefined,
+    status: filter.status || undefined,
+    q: filter.q?.trim() || undefined,
+  }
+}
+
+export async function fetchHistory(filter: HistoryFilter, offset = 0, limit = 50): Promise<HistoryPage> {
+  const { data } = await api.get<HistoryPage>('/history', { params: { ...filterParams(filter), offset, limit } })
+  return data
+}
+
+export async function deleteHistory(paperIds: number[], deleteFiles: boolean): Promise<DeleteResult> {
+  const { data } = await api.post<DeleteResult>('/history/delete', { paper_ids: paperIds, delete_files: deleteFiles })
+  return data
+}
+
+/** Delete every entry matching the filter (all entries when the filter is empty). */
+export async function clearHistory(filter: HistoryFilter, deleteFiles: boolean): Promise<DeleteResult> {
+  const { data } = await api.post<DeleteResult>(
+    '/history/clear',
+    { ...filterParams(filter), delete_files: deleteFiles },
+    { timeout: 120000 },
+  )
+  return data
+}
+
+export async function pruneCache(): Promise<{ removed: number; freed_bytes: number; storage: StorageUsage }> {
+  const { data } = await api.post('/history/prune', null, { timeout: 120000 })
   return data
 }
 
