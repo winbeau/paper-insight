@@ -27,6 +27,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
 ]
 
 const activeTab = ref<TabKey>(props.initialTab ?? 'research')
+const directionsTab = ref<InstanceType<typeof DirectionsTab> | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const saveError = ref('')
@@ -119,26 +120,48 @@ async function saveSettings() {
           </div>
 
           <template v-else-if="settings">
+            <!-- v-show: keep the selected direction while visiting the other tabs -->
             <DirectionsTab
-              v-if="activeTab === 'research'"
+              v-show="activeTab === 'research'"
+              ref="directionsTab"
               v-model:settings="settings"
               :arxiv-options="arxivOptions"
               :initial-direction-id="initialDirectionId"
               :new-direction="newDirection"
             />
-            <ProvidersTab v-else-if="activeTab === 'providers'" v-model:settings="settings" />
-            <PipelineTab v-else v-model:settings="settings" />
+            <ProvidersTab v-if="activeTab === 'providers'" v-model:settings="settings" />
+            <PipelineTab v-else-if="activeTab === 'pipeline'" v-model:settings="settings" />
           </template>
         </div>
 
         <!-- Footer -->
-        <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex items-center justify-end gap-3">
-          <p v-if="saveError" class="mr-auto text-xs text-red-600">{{ saveError }}</p>
-          <p v-else-if="setupProblem?.kind === 'key'" class="mr-auto text-xs text-amber-700">
-            请在「模型服务」中填写 {{ setupProblem.provider.name }} 的 API Key。
-          </p>
-          <p v-else-if="setupProblem && !loading" class="mr-auto text-xs text-amber-700">
-            尚未配置推理模型，论文将无法分析。
+        <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex items-center gap-3">
+          <!-- AI fill for the selected research direction -->
+          <button
+            v-if="activeTab === 'research' && settings && directionsTab"
+            class="flex-shrink-0 flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors"
+            :class="directionsTab.autofillStatus === 'running'
+              ? 'text-amber-800 bg-amber-50 border-amber-200'
+              : directionsTab.autofillStatus === 'done'
+                ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                : 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100'"
+            @click="directionsTab.openAutofill()"
+          >
+            <svg v-if="directionsTab.autofillStatus === 'running'" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span v-else>✨</span>
+            {{ directionsTab.autofillStatus === 'running' ? 'AI 填写中…' : directionsTab.autofillStatus === 'done' ? '查看 AI 结果' : 'AI 帮我填写' }}
+          </button>
+          <p class="flex-1 min-w-0 truncate text-xs">
+            <span v-if="saveError" class="text-red-600">{{ saveError }}</span>
+            <span v-else-if="setupProblem?.kind === 'key'" class="text-amber-700">
+              请在「模型服务」中填写 {{ setupProblem.provider.name }} 的 API Key。
+            </span>
+            <span v-else-if="setupProblem && !loading" class="text-amber-700">
+              尚未配置推理模型，论文将无法分析。
+            </span>
           </p>
           <button
             @click="$emit('close')"

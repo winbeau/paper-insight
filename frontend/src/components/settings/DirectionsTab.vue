@@ -64,6 +64,15 @@ function runState(direction: Direction) {
 
 watch(activeKey, () => { confirmingDelete.value = false })
 
+// For the modal footer's "AI 帮我填写" button (acts on the selected direction)
+const autofillStatus = computed(() => (active.value ? runState(active.value) : 'idle'))
+
+function openAutofill() {
+  if (active.value) dialogKey.value = active.value._key!
+}
+
+defineExpose({ openAutofill, autofillStatus })
+
 onMounted(async () => {
   activeKey.value =
     directions.value.find(d => d.id === props.initialDirectionId)?._key ?? directions.value[0]?._key ?? ''
@@ -122,41 +131,22 @@ onMounted(async () => {
       class="flex-1"
     />
 
-    <!-- Page actions: AI fill (bottom-left), delete (bottom-right) -->
-    <div v-if="active" class="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+    <!-- Delete (the AI fill button lives in the modal footer, next to Cancel / Save) -->
+    <div v-if="active && directions.length > 1" class="mt-6 pt-4 border-t border-gray-100 flex items-center justify-end gap-2 text-xs">
+      <template v-if="confirmingDelete">
+        <span class="text-gray-500">
+          保存后将删除此方向<span v-if="active.id != null && counts[active.id]?.total">及其 {{ counts[active.id].total }} 篇论文</span>
+        </span>
+        <button class="px-2.5 py-1 rounded-md text-gray-600 border border-gray-200 hover:bg-gray-50" @click="confirmingDelete = false">取消</button>
+        <button class="px-2.5 py-1 rounded-md text-white bg-red-600 hover:bg-red-700" @click="removeActive">删除</button>
+      </template>
       <button
-        class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors"
-        :class="runState(active) === 'running'
-          ? 'text-amber-800 bg-amber-50 border-amber-200'
-          : runState(active) === 'done'
-            ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
-            : 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100'"
-        @click="dialogKey = active._key!"
+        v-else
+        class="px-2.5 py-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+        @click="confirmingDelete = true"
       >
-        <svg v-if="runState(active) === 'running'" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        <span v-else>✨</span>
-        {{ runState(active) === 'running' ? 'AI 填写中…' : runState(active) === 'done' ? '查看 AI 结果' : 'AI 帮我填写' }}
+        删除此方向
       </button>
-
-      <div v-if="directions.length > 1" class="flex items-center gap-2 text-xs">
-        <template v-if="confirmingDelete">
-          <span class="text-gray-500">
-            保存后将删除此方向<span v-if="active.id != null && counts[active.id]?.total">及其 {{ counts[active.id].total }} 篇论文</span>
-          </span>
-          <button class="px-2.5 py-1 rounded-md text-gray-600 border border-gray-200 hover:bg-gray-50" @click="confirmingDelete = false">取消</button>
-          <button class="px-2.5 py-1 rounded-md text-white bg-red-600 hover:bg-red-700" @click="removeActive">删除</button>
-        </template>
-        <button
-          v-else
-          class="px-2.5 py-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-          @click="confirmingDelete = true"
-        >
-          删除此方向
-        </button>
-      </div>
     </div>
 
     <AutofillDialog
