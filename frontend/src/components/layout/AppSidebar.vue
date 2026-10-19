@@ -23,6 +23,14 @@ const emit = defineEmits<{
 }>()
 
 const showSettings = ref(false)
+const settingsTab = ref<'research' | 'providers' | 'pipeline'>('research')
+
+function openSettings(tab: 'research' | 'providers' | 'pipeline' = 'research') {
+  settingsTab.value = tab
+  showSettings.value = true
+}
+
+defineExpose({ openSettings })
 
 const relevanceOptions: { value: FilterType; label: string }[] = [
   { value: 'all', label: 'All Papers' },
@@ -179,7 +187,7 @@ function handleSettingsClose() {
     <!-- Settings Button (Bottom) -->
     <div class="p-4 border-t border-[var(--color-paper-200)] bg-[var(--color-paper-50)]">
       <button
-        @click="showSettings = true"
+        @click="openSettings()"
         class="w-full px-4 py-2 text-sm font-medium text-[var(--color-ink-700)] hover:text-[var(--color-ink-900)] bg-transparent hover:bg-[var(--color-paper-200)] rounded-lg transition-colors flex items-center justify-center gap-2"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -190,6 +198,6 @@ function handleSettingsClose() {
       </button>
     </div>
 
-    <SettingsModal v-if="showSettings" @close="handleSettingsClose" />
+    <SettingsModal v-if="showSettings" :initial-tab="settingsTab" @close="handleSettingsClose" />
   </aside>
 </template>

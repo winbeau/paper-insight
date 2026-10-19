@@ -4,34 +4,18 @@ import { ref, watch } from 'vue'
 const props = defineProps<{
   show: boolean
   thumbnailUrl: string
-  fallbackUrl?: string
   style: { left: string; top: string }
   origin: string
 }>()
 
 const currentSrc = ref(props.thumbnailUrl)
-const triedFallback = ref(false)
-const loaded = ref(false)
 
 watch(
   () => props.thumbnailUrl,
   (next) => {
     currentSrc.value = next
-    triedFallback.value = false
-    loaded.value = false
   },
 )
-
-function handleLoad() {
-  loaded.value = true
-}
-
-function handleError() {
-  if (!loaded.value && !triedFallback.value && props.fallbackUrl) {
-    currentSrc.value = props.fallbackUrl
-    triedFallback.value = true
-  }
-}
 </script>
 
 <template>
@@ -54,8 +38,6 @@ function handleError() {
             :src="currentSrc"
             class="w-full h-auto object-contain block"
             alt="Paper Preview"
-            @load="handleLoad"
-            @error="handleError"
           />
           <div class="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent pointer-events-none mix-blend-multiply"></div>
         </div>

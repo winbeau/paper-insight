@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from app.config import APP_VERSION
 from app.constants import ARXIV_OPTIONS
 
 router = APIRouter()
@@ -10,7 +11,7 @@ router = APIRouter()
 @router.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": APP_VERSION}
 
 
 @router.get("/constants")

@@ -11,7 +11,7 @@ import { useThumbnailPreview } from '../../composables/useThumbnailPreview'
 import { useStreamProcessing } from '../../composables/useStreamProcessing'
 import { deletePaper } from '../../services/api'
 import { getLogger } from '../../utils/logger'
-import { resolveApiUrl, resolveStaticUrl } from '../../utils/urls'
+import { resolveApiUrl } from '../../utils/urls'
 
 const logger = getLogger('PaperCard')
 
@@ -40,7 +40,6 @@ const showDeleteConfirm = ref(false)
 
 // Thumbnail preview composable
 const thumbnailUrl = computed(() => resolveApiUrl(props.paper.thumbnail_url))
-const thumbnailFallbackUrl = computed(() => resolveStaticUrl(props.paper.thumbnail_url))
 const {
   isHoveringAbstract,
   thumbnailStyle,
@@ -65,7 +64,7 @@ const {
 } = useStreamProcessing(
   toRef(() => props.paper.id),
   toRef(() => props.paper.processing_status),
-  toRef(() => props.paper.is_processed),
+  toRef(() => props.paper.processing_error),
   (paperId) => emit('refresh', paperId)
 )
 
@@ -269,7 +268,6 @@ function toggleExpand() {
               <ThumbnailPreview
                 :show="isHoveringAbstract"
                 :thumbnail-url="thumbnailUrl || ''"
-                :fallback-url="thumbnailFallbackUrl || undefined"
                 :style="thumbnailStyle"
                 :origin="previewOrigin"
               />
@@ -317,7 +315,7 @@ function toggleExpand() {
       v-if="!paper.is_processed"
       class="px-5 py-3 bg-[var(--color-paper-200)]/60 rounded-b-xl border-t border-[var(--color-paper-300)]/50"
     >
-      <!-- Dify Workflow Progress -->
+      <!-- Analysis pipeline progress -->
       <ThinkingPanel
         v-if="isStreaming || streamProgress.length > 0 || streamError"
         :steps="streamProgress"

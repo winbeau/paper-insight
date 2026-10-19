@@ -2,8 +2,11 @@ GEMINI.md
 CLAUDE.md
 AGENT.md
 frontend/tsconfig.tsbuildinfo
-backend/app/static/thumbnails/*.jpg
 docs/
 .env
 .env.*
 !.env.example
+
+# macOS app build output
+/dist/
+packaging/build/

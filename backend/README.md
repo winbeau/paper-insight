@@ -1,13 +1,11 @@
----
-title: Paper Insight API
-emoji: "🎉"
-colorFrom: "blue"
-colorTo: "green"
-sdk: "docker"
-app_file: "Dockerfile"
-pinned: false
----
+# PaperInsight backend
 
-# Paper Insight API
+FastAPI app that powers the PaperInsight Mac app: arXiv fetching, the analysis pipeline
+(MinerU → vision model → reasoning model), settings and the local MinerU runtime.
+`app/desktop.py` wraps it in a native window; see the top-level README for building the app.
 
-FastAPI backend for the Paper Insight project.
+```bash
+uv sync
+PAPER_INSIGHT_DATA_DIR=/tmp/paper-insight-dev uv run uvicorn app.main:app --reload --port 8000
+uv run pytest
+```

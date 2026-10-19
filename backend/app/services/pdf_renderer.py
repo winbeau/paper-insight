@@ -1,78 +1,80 @@
-import fitz  # pymupdf
-import httpx
+"""PDF download cache + first-page thumbnails."""
+
+import asyncio
 from pathlib import Path
 from typing import Optional
-import asyncio
 
+import fitz  # pymupdf
+import httpx
+
+from app.config import THUMBNAILS_DIR, pdf_path_for, thumbnail_url_for, thumbnail_path_for
 from app.logging_config import get_logger
+from app.services.errors import PipelineError
+from app.services.network import USER_AGENT
 
 logger = get_logger("services.pdf_renderer")
 
-# Constants
-STATIC_DIR = Path(__file__).parent.parent / "static"
-THUMBNAILS_DIR = STATIC_DIR / "thumbnails"
-
-# Ensure base directory exists on import
-THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+MAX_PDF_BYTES = 200 * 1024 * 1024
 
 
-async def generate_thumbnail(arxiv_id: str, pdf_url: str) -> Optional[str]:
-    """
-    Generates a JPG thumbnail from the first page of an arXiv PDF.
-    
-    Args:
-        arxiv_id: The arXiv ID of the paper (used for filename).
-        pdf_url: The URL to download the PDF from.
-        
-    Returns:
-        str: Relative URL path to the thumbnail (e.g., "/static/thumbnails/1234.5678.jpg")
-        None: If generation fails.
-    """
-    safe_id = (
-        arxiv_id.replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
-        .replace(" ", "_")
-    )
-    filename = f"{safe_id}.jpg"
-    file_path = THUMBNAILS_DIR / filename
-    relative_url = f"/static/thumbnails/{filename}"
+async def ensure_pdf(arxiv_id: str, pdf_url: str) -> Path:
+    """Return the cached PDF for a paper, downloading it on first use."""
+    path = pdf_path_for(arxiv_id)
+    if path.exists() and path.stat().st_size > 0:
+        return path
 
-    # 0. Ensure output directory exists (may be cleaned between runs)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".part")
     try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        logger.error("Failed to ensure thumbnail directory %s: %s", file_path.parent, e)
-        return None
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(120.0, connect=20.0),
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
+            async with client.stream("GET", pdf_url) as response:
+                if response.status_code != 200:
+                    raise PipelineError(
+                        "download_error", f"下载 PDF 失败: HTTP {response.status_code} ({pdf_url})"
+                    )
+                size = 0
+                with open(tmp_path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > MAX_PDF_BYTES:
+                            raise PipelineError("entity_too_large", "PDF 超过 200MB")
+                        f.write(chunk)
+        with open(tmp_path, "rb") as f:
+            if f.read(5) != b"%PDF-":
+                raise PipelineError("download_error", f"下载内容不是 PDF ({pdf_url})")
+        tmp_path.replace(path)
+        return path
+    except PipelineError:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except httpx.TimeoutException as e:
+        tmp_path.unlink(missing_ok=True)
+        raise PipelineError("timeout", f"下载 PDF 超时: {e}")
+    except httpx.HTTPError as e:
+        tmp_path.unlink(missing_ok=True)
+        raise PipelineError("download_error", f"下载 PDF 失败: {e}")
 
-    # 1. Check cache
+
+async def generate_thumbnail(arxiv_id: str, pdf_path: Path) -> Optional[str]:
+    """Render the first page of a cached PDF to a JPG.
+
+    Returns the thumbnail URL ("/static/thumbnails/<id>.jpg"), or None on failure.
+    """
+    url = thumbnail_url_for(arxiv_id)
+    file_path = thumbnail_path_for(url)
+    if file_path is None:
+        return None
     if file_path.exists():
-        return relative_url
-
+        return url
     try:
-        # 2. Download PDF
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            # Arxiv often requires a user agent
-            headers = {
-                "User-Agent": "PaperInsight/1.0 (mailto:your-email@example.com)"
-            }
-            # Modify URL to ensure direct PDF link if needed (arxiv often redirects /abs/ to /pdf/)
-            # Usually input pdf_url is already correct (e.g. http://arxiv.org/pdf/2312.00001v1)
-            
-            response = await client.get(pdf_url, headers=headers)
-            response.raise_for_status()
-            pdf_data = response.content
-
-        # 3. Render Thumbnail (offload CPU-bound work)
+        THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+        pdf_data = await asyncio.to_thread(pdf_path.read_bytes)
         success = await asyncio.to_thread(_render_thumbnail, pdf_data, file_path)
-        if not success:
-            return None
-        
-        return relative_url
-
-    except httpx.HTTPStatusError as e:
-        logger.warning("Failed to download PDF for %s: %s", arxiv_id, e)
-        return None
+        return url if success else None
     except Exception as e:
         logger.error("Error generating thumbnail for %s: %s", arxiv_id, e)
         return None

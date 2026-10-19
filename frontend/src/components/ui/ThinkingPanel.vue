@@ -29,29 +29,11 @@ const statusIcon = computed(() => {
 })
 
 const completedSteps = computed(() => {
-  return props.steps.filter(s => s.status === 'done').length
+  return props.steps.filter(s => s.status === 'done' || s.status === 'skipped').length
 })
 
-// Group steps for rendering - steps with same group number are rendered together
-const groupedSteps = computed(() => {
-  const result: Array<{ steps: ProgressStep[]; isParallel: boolean }> = []
-  let i = 0
-
-  while (i < props.steps.length) {
-    const step = props.steps[i]
-    if (step.group !== undefined) {
-      // Find all steps with the same group
-      const parallelSteps = props.steps.filter(s => s.group === step.group)
-      result.push({ steps: parallelSteps, isParallel: true })
-      // Skip all steps in this group
-      i += parallelSteps.length
-    } else {
-      result.push({ steps: [step], isParallel: false })
-      i++
-    }
-  }
-
-  return result
+const activeStep = computed(() => {
+  return props.steps.find(s => s.status === 'active' || s.status === 'error') ?? null
 })
 
 // Auto-scroll to bottom when new content arrives
@@ -82,75 +64,46 @@ function toggleCollapse() {
     <div v-if="steps.length > 0" class="px-3 pt-3 pb-2">
       <!-- Step Indicators -->
       <div class="flex items-center gap-1 flex-wrap">
-        <template v-for="(group, groupIndex) in groupedSteps" :key="groupIndex">
-          <!-- Parallel Steps Group -->
-          <div v-if="group.isParallel" class="flex items-center">
-            <template v-for="(step, stepIndex) in group.steps" :key="step.label">
-              <!-- Step Item -->
-              <div
-                class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-all duration-300 border"
-                :class="{
-                  'bg-emerald-50 text-emerald-700 border-emerald-300': step.status === 'done',
-                  'bg-amber-50 text-amber-700 border-amber-300 animate-pulse': step.status === 'active',
-                  'bg-gray-50 text-gray-400 border-gray-200': step.status === 'pending',
-                  'bg-red-50 text-red-700 border-red-300': step.status === 'error',
-                }"
-              >
-                <!-- Status Icon -->
-                <span class="flex-shrink-0">
-                  <svg v-if="step.status === 'done'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span v-else-if="step.status === 'active'" class="flex h-2.5 w-2.5 items-center justify-center">
-                    <span class="absolute h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping"></span>
-                    <span class="relative h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                  </span>
-                  <span v-else-if="step.status === 'pending'" class="h-1.5 w-1.5 rounded-full bg-gray-300 block"></span>
-                  <svg v-else-if="step.status === 'error'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </span>
-                <span class="truncate max-w-[68px]">{{ step.label }}</span>
-              </div>
-              <!-- Parallel separator | -->
-              <span v-if="stepIndex < group.steps.length - 1" class="text-gray-300 text-[10px] font-bold mx-0.5">|</span>
-            </template>
-          </div>
-
-          <!-- Single Step -->
+        <template v-for="(step, index) in steps" :key="step.key">
           <div
-            v-else
             class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-all duration-300 border"
             :class="{
-              'bg-emerald-50 text-emerald-700 border-emerald-300': group.steps[0].status === 'done',
-              'bg-amber-50 text-amber-700 border-amber-300 animate-pulse': group.steps[0].status === 'active',
-              'bg-gray-50 text-gray-400 border-gray-200': group.steps[0].status === 'pending',
-              'bg-red-50 text-red-700 border-red-300': group.steps[0].status === 'error',
+              'bg-emerald-50 text-emerald-700 border-emerald-300': step.status === 'done',
+              'bg-amber-50 text-amber-700 border-amber-300 animate-pulse': step.status === 'active',
+              'bg-gray-50 text-gray-400 border-gray-200': step.status === 'pending',
+              'bg-gray-50 text-gray-400 border-dashed border-gray-300 line-through': step.status === 'skipped',
+              'bg-red-50 text-red-700 border-red-300': step.status === 'error',
             }"
+            :title="step.message || step.label"
           >
             <!-- Status Icon -->
             <span class="flex-shrink-0">
-              <svg v-if="group.steps[0].status === 'done'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg v-if="step.status === 'done'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
               </svg>
-              <span v-else-if="group.steps[0].status === 'active'" class="flex h-2.5 w-2.5 items-center justify-center">
+              <span v-else-if="step.status === 'active'" class="flex h-2.5 w-2.5 items-center justify-center">
                 <span class="absolute h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping"></span>
                 <span class="relative h-1.5 w-1.5 rounded-full bg-amber-500"></span>
               </span>
-              <span v-else-if="group.steps[0].status === 'pending'" class="h-1.5 w-1.5 rounded-full bg-gray-300 block"></span>
-              <svg v-else-if="group.steps[0].status === 'error'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <span v-else-if="step.status === 'pending' || step.status === 'skipped'" class="h-1.5 w-1.5 rounded-full bg-gray-300 block"></span>
+              <svg v-else-if="step.status === 'error'" class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </span>
-            <span class="truncate max-w-[68px]">{{ group.steps[0].label }}</span>
+            <span class="truncate max-w-[96px]">{{ step.label }}</span>
           </div>
 
-          <!-- Connector arrow (except last group) -->
-          <svg v-if="groupIndex < groupedSteps.length - 1" class="w-2.5 h-2.5 text-gray-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <!-- Connector arrow (except last step) -->
+          <svg v-if="index < steps.length - 1" class="w-2.5 h-2.5 text-gray-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
         </template>
       </div>
+
+      <!-- Current step detail -->
+      <p v-if="activeStep?.message" class="mt-1.5 text-[10px] text-gray-500 truncate">
+        {{ activeStep.message }}
+      </p>
 
       <!-- Progress Summary -->
       <div class="mt-2 flex items-center gap-2 text-[10px] text-gray-500">
@@ -251,7 +204,7 @@ function toggleCollapse() {
             'text-gray-500': !isStreaming && !error && !thought,
           }"
         >
-          {{ error ? '错误详情' : isStreaming ? 'R1 思考中...' : '思考过程' }}
+          {{ error ? '错误详情' : isStreaming ? '模型思考中...' : '思考过程' }}
         </span>
       </div>
 

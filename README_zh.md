@@ -7,234 +7,110 @@
 </p>
 <h1 align="center" style="margin-top: 0; margin-bottom: 6px; font-size: 2.75rem;">PaperInsight</h1>
 
-<p align="center" style="margin-top: 0; margin-bottom: 6px;">AI 驱动的 arXiv 论文追踪器，为你的研究提供跨领域洞察分析。</p>
+<p align="center" style="margin-top: 0; margin-bottom: 6px;">追踪 arXiv 论文、结合你的研究 Idea 做跨领域分析的 macOS 应用。</p>
 
 <p align="center" style="margin-top: 0;">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white" alt="macOS" />
   <img src="https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs&logoColor=white" alt="Vue.js" />
-  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/Dify-Workflow-blue" alt="Dify" />
+  <img src="https://img.shields.io/badge/FastAPI-0.128-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/MinerU-4.x-blue" alt="MinerU" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" />
 </p>
 
 ## 概述
 
-PaperInsight 自动从 arXiv 获取论文，使用 Dify Workflow（集成 DeepSeek R1 推理模型）分析论文与你研究方向的关联性，并在现代化的仪表盘中展示 AI 生成的跨领域洞察。
+PaperInsight 每天从 arXiv 获取新论文，用 **MinerU** 解析 PDF，用**视觉模型**解读图表，再由**推理模型**评估论文与你研究 Idea 的关联 —— 全部在一个原生 macOS 窗口中完成。每个依赖模型的步骤都可单独配置，支持任意 **兼容 OpenAI 接口** 的服务。
 
-### 核心功能
+默认使用本地 MinerU 解析 PDF（在设置中一键安装），并用 **DeepSeek-V4.1-Flash**（`deepseek-flash`，支持文本与图片）同时完成图像识别与推理分析：安装 MinerU、填入 DeepSeek API Key 即可使用。
 
-- **自动论文获取** — 基于可配置的研究主题每日从 arXiv 获取论文（UTC 06:00）
-- **AI 驱动分析** — Dify Workflow 生成论文精华、概念桥接、关联度评分和启发式建议
-- **实时流式传输** — 基于 SSE 的流式 LLM 分析，实时展示思考过程
-- **智能过滤** — 按关联度评分（高/低）和处理状态过滤论文
-- **现代化仪表盘** — 融合学术风格与现代设计语言的简洁 UI
-- **PDF 缩略图** — 自动生成论文首页缩略图便于视觉识别
-- **批量处理** — 支持并发处理多篇论文并追踪进度
-- **arXiv 导入** — 通过 arXiv URL 或 ID 手动导入任意论文
-- **结构化日志** — 全栈日志系统便于调试和监控
+### 分析流程
 
-## 技术栈
+```
+下载 PDF ─▶ ① 解析 / OCR（MinerU 云端 | MinerU 本地）─▶ ② 图像识别（视觉模型）─▶ ③ 推理分析（推理模型，流式输出）─▶ 整合输出
+```
 
-| 层级 | 技术 |
+| 步骤 | 引擎 | 可配置项 |
+|------|------|----------|
+| ① 解析 / OCR | MinerU 云端（mineru.net API）或 MinerU 本地（由应用安装并运行） | 引擎、模型版本 / Tier、OCR、公式与表格识别 |
+| ② 图像识别 | 任意兼容 OpenAI 接口的视觉模型 | 服务、模型、每篇最多图表数、并发 |
+| ③ 推理分析 | 任意兼容 OpenAI 接口的模型，推理过程实时显示在卡片上 | 服务、模型、温度、最大输出、正文长度、提示词 |
+
+每篇论文输出：核心创新、与你研究的概念桥接、基于图表的事实核查（"Figure 3 支持……"）、0–10 相关性评分以及可执行的实验建议。
+
+### 功能
+
+- **原生 Mac 应用** —— 单窗口，无需部署服务，数据只保存在本机
+- **每日自动获取** —— 本地时间 06:00；若 Mac 当时休眠，启动后会自动补抓
+- **模型可配置** —— 内置 DeepSeek、OpenAI、阿里云百炼、硅基流动、智谱、Moonshot、OpenRouter、Ollama、LM Studio 预设，也可添加任意兼容服务；可在设置中测试并列出模型
+- **本地 MinerU** —— 一键安装 MinerU 并将模型检查点下载到应用数据目录；解析时自动启动服务，空闲后自动停止
+- **实时进度** —— 每张卡片显示分步进度与流式推理内容
+- **arXiv 导入、筛选、PDF 缩略图、结构化日志**
+
+## 安装
+
+构建应用（Apple Silicon，macOS 13+）：
+
+```bash
+brew install uv pnpm      # 如未安装
+./scripts/build_mac.sh    # → dist/PaperInsight.app 与 dist/PaperInsight.dmg
+```
+
+打开 DMG，将 **PaperInsight** 拖入「应用程序」。构建产物为 ad-hoc 签名（未公证）：首次启动请右键应用 →「打开」。
+
+## 配置
+
+打开 **Settings（设置）**：
+
+1. **模型服务** —— 已预置 DeepSeek，填入 API Key 即可。若想为不同步骤使用不同模型，可添加其他服务。
+2. **解析流程**
+   - **① MinerU**：填写 [mineru.net](https://mineru.net) → API 管理 中创建的 Token（云端）；或选择 **MinerU 本地** →「安装并拉取模型」。本地安装约需 3–6 GB 磁盘（建议 16 GB 内存）；如果 Hugging Face 较慢，可将模型下载源切换为 ModelScope。也可连接已运行的 `mineru-kit api-server`。
+   - **② 图像识别 / ③ 推理分析**：默认 `deepseek-flash`，可用「测试」按钮验证。
+3. **研究方向** —— arXiv 分类、检索式以及研究 Idea（推理模型据此评估论文）。也可在此覆盖分析提示词。
+4. **网络代理**（可选）—— 从 Finder 启动的应用不会继承终端里的代理环境变量，如访问 arXiv / API 需要代理请在此设置。
+
+若 MinerU 解析某篇论文失败，该论文会被标记为失败，可稍后重试。
+
+## 数据位置
+
+| 内容 | 位置 |
 |------|------|
-| 前端 | Vue 3, TypeScript, Vite, Tailwind CSS |
-| 后端 | FastAPI, SQLModel, SQLite |
-| AI | Dify Workflow API (DeepSeek R1) |
-| 数据源 | arXiv API |
-| 调度 | APScheduler |
+| 数据库（论文、设置、API Key） | `~/Library/Application Support/PaperInsight/paper_insight.db`（权限 0600） |
+| PDF、MinerU 解析结果、缩略图 | `~/Library/Application Support/PaperInsight/{pdfs,parsed,thumbnails}/` |
+| 本地 MinerU（环境与模型） | `~/Library/Application Support/PaperInsight/mineru/` |
+| 日志 | `~/Library/Logs/PaperInsight/app.log`、`mineru.log` |
 
-## 快速开始
+**从服务器版本迁移：** 退出应用，把旧的 `paper_insight.db` 复制到 `~/Library/Application Support/PaperInsight/`，重新启动即可，数据库结构会自动升级。缺失的缩略图会在论文下次分析时重新生成。
 
-### 前置条件
-
-- Python 3.12+ 及 [uv](https://github.com/astral-sh/uv)
-- Node.js 18+ 及 pnpm
-- Dify API Key（自托管或云端）
-
-### 1. 克隆仓库
+## 开发
 
 ```bash
-git clone https://github.com/yourusername/paper-insight.git
-cd paper-insight
-```
-
-### 2. 后端配置
-
-```bash
+# 后端（API 在 :8000，数据写入临时目录）
 cd backend
-
-# 使用 uv 安装依赖
 uv sync
+PAPER_INSIGHT_DATA_DIR=/tmp/paper-insight-dev uv run uvicorn app.main:app --reload --port 8000
 
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env 并添加 DIFY_API_KEY
-
-# 启动服务器（SQLite 数据库自动创建）
-uv run uvicorn app.main:app --reload
-```
-
-### 3. 前端配置
-
-```bash
+# 前端（Vite 在 :5173，将 /api 代理到 :8000）
 cd frontend
-
-# 安装依赖
 pnpm install
-
-# 启动开发服务器
 pnpm dev
+
+# 用桌面窗口打开构建后的前端
+pnpm -C frontend build
+cd backend && uv run python -m app.desktop
+
+# 测试
+cd backend && uv run pytest
 ```
 
-### 4. 访问仪表盘
-
-在浏览器中打开 [http://localhost:5173](http://localhost:5173)。
-
-## 配置说明
-
-### 环境变量
-
-在 `backend/` 目录创建 `.env` 文件：
-
-```env
-# 数据库（SQLite - 自动创建）
-DATABASE_URL=sqlite:///paper_insight.db
-
-# Dify Workflow API
-DIFY_API_KEY=app-xxxxxxxxxxxxxxxx
-DIFY_API_BASE=http://your-dify-instance:8080/v1
-```
-
-### 研究设置（应用内）
-
-使用应用内的 **Settings** 弹窗配置：
-
-- **arXiv 分类**: 选择搜索范围（cs.CV, cs.LG, cs.CL 等）
-- **研究关键词**: 支持 AND/OR 逻辑的 arXiv 查询字符串
-- **研究 Idea**: 你的研究背景，用于跨领域洞察分析（发送给 Dify）
-- **System Prompt**: 高级提示词自定义
-
-### 评分与可见性
-
-| 评分 | 标签 | 行为 |
-|------|------|------|
-| 9–10 | 高关联 | 突出显示 |
-| 5–8 | 低关联 | 正常显示 |
-| < 5 | 跳过 | 默认列表中隐藏 |
-
-## API 端点
-
-| 方法 | 端点 | 描述 |
-|------|------|------|
-| `GET` | `/health` | 健康检查 |
-| `GET` | `/constants` | 获取 arXiv 分类选项 |
-| `GET` | `/stats` | 获取统计数据 |
-| `GET` | `/settings` | 获取应用设置 |
-| `PUT` | `/settings` | 更新应用设置 |
-| `GET` | `/papers` | 获取论文列表（支持过滤） |
-| `GET` | `/papers/pending` | 获取待处理论文 ID |
-| `GET` | `/papers/{id}` | 获取单篇论文 |
-| `DELETE` | `/papers/{id}` | 删除论文 |
-| `POST` | `/papers/import` | 从 arXiv URL 导入论文 |
-| `POST` | `/papers/fetch` | 触发论文获取 |
-| `GET` | `/papers/fetch/stream` | 获取进度流（SSE） |
-| `POST` | `/papers/process/batch` | 批量处理论文 |
-| `GET` | `/papers/process/batch/stream` | 批量处理进度流（SSE） |
-| `POST` | `/papers/{id}/process` | 处理单篇论文 |
-| `GET` | `/papers/{id}/process/stream` | 处理进度流（SSE） |
-
-### 查询参数
-
-```
-GET /papers?skip=0&limit=20&min_score=7&processed_only=true
-```
-
-## 项目结构
-
-```
-paper-insight/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI 应用入口
-│   │   ├── models.py            # SQLModel 模型定义
-│   │   ├── database.py          # 数据库连接
-│   │   ├── constants.py         # arXiv 分类常量
-│   │   ├── dependencies.py      # 依赖注入
-│   │   ├── logging_config.py    # 日志配置
-│   │   ├── middleware.py        # 请求日志中间件
-│   │   ├── api/                 # 路由模块
-│   │   │   ├── health.py
-│   │   │   ├── settings.py
-│   │   │   ├── papers.py
-│   │   │   ├── processing.py
-│   │   │   └── stats.py
-│   │   ├── services/
-│   │   │   ├── arxiv_bot.py     # arXiv 获取器
-│   │   │   ├── dify_client.py   # Dify API 客户端
-│   │   │   └── pdf_renderer.py  # 缩略图生成器
-│   │   └── static/thumbnails/   # 生成的缩略图
-│   ├── .env.example
-│   └── pyproject.toml
-│
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── layout/          # AppSidebar
-    │   │   ├── paper/           # PaperCard, ThumbnailPreview
-    │   │   └── ui/              # RelevanceBadge, AnalysisBox, ThinkingPanel
-    │   ├── composables/         # Vue 组合式函数
-    │   ├── services/api.ts      # API 客户端（含拦截器）
-    │   ├── utils/logger.ts      # 前端日志工具
-    │   ├── types/               # TypeScript 类型
-    │   ├── App.vue
-    │   └── style.css            # 设计系统
-    ├── package.json
-    └── vite.config.ts
-```
-
-## 日志系统
-
-PaperInsight 包含完整的日志系统：
-
-### 后端
-- **格式**: `YYYY-MM-DD HH:mm:ss | LEVEL | module | message`
-- **请求日志**: 所有 HTTP 请求及耗时
-- **服务日志**: arXiv 获取、Dify 分析、PDF 渲染
-
-### 前端
-- **开发环境**: 输出所有级别（debug, info, warn, error）
-- **生产环境**: 仅输出 warn 和 error
-- **Axios 拦截器**: 请求/响应日志
-
-## 路线图
-
-- [x] 定时自动获取（APScheduler）
-- [x] SSE 实时流式传输
-- [x] PDF 缩略图生成
-- [x] 并发控制的批量处理
-- [x] 结构化日志系统
-- [ ] 论文全文搜索
-- [ ] 导出到 Notion/Obsidian
-- [ ] 论文收藏夹
-- [ ] 邮件摘要通知
-
-## 贡献
-
-欢迎贡献！请随时提交 Pull Request。
-
-1. Fork 本仓库
-2. 创建特性分支（`git checkout -b feature/amazing-feature`）
-3. 提交更改（`git commit -m 'Add amazing feature'`）
-4. 推送到分支（`git push origin feature/amazing-feature`）
-5. 发起 Pull Request
+项目结构见 [README.md](README.md#project-structure)。本地 API 仅监听 `127.0.0.1`，并拒绝来自其他主机和跨站来源的请求。
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+MIT —— 详见 [LICENSE](LICENSE)。
 
 ## 致谢
 
-- [arXiv](https://arxiv.org/) 提供开放获取的研究论文
-- [Dify](https://dify.ai/) 强大的工作流编排平台
-- [DeepSeek](https://deepseek.com/) R1 推理模型
-- 设计灵感来自 [Linear](https://linear.app/) 和 [Vercel](https://vercel.com/)
+- [arXiv](https://arxiv.org/) 提供开放获取的论文
+- [MinerU](https://github.com/opendatalab/MinerU) 提供 PDF 解析
+- [DeepSeek](https://deepseek.com/) 提供默认模型
+- [pywebview](https://pywebview.flowrl.com/) 提供原生窗口
